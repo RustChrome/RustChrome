@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#20262e"/>
+      <stop offset="1" stop-color="#0d1013"/>
+    </linearGradient>
+    <linearGradient id="shine" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.10"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#bg)"/>
+  <rect x="16" y="16" width="480" height="240" rx="112" fill="url(#shine)"/>
+  <g fill="none" stroke-width="44" stroke-linecap="round">
+    <path d="M 271.7 106.8 A 150 150 0 0 1 393.0 317.0" stroke="#4285F4"/>
+    <path d="M 383.2 335.5 A 150 150 0 0 1 141.1 352.4" stroke="#34A853"/>
+    <path d="M 128.8 335.5 A 150 150 0 0 1 219.7 110.5" stroke="#EA4335"/>
+  </g>
+  <path d="M 256 182 L 314 206 V 261 C 314 303 290 329 256 341 C 222 329 198 303 198 261 V 206 Z" fill="#ffffff"/>
+  <circle cx="256" cy="248" r="16" fill="#20262e"/>
+  <rect x="249" y="254" width="14" height="32" rx="7" fill="#20262e"/>
+</svg>
