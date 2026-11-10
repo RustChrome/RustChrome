@@ -28,9 +28,38 @@ reported and the code is fixed.
 | Memory | summed RSS/working set of the whole process tree | both |
 | Idle CPU | two samples five seconds apart, no interaction | both |
 | Navigation, multi-tab, shutdown | smoke test: launch, create tab, navigate, verify status 0, exit 0 | both |
-| Real websites | `RUSTCHROME_COMPAT` loads example.com, Wikipedia, Hacker News and rust-lang.org, records status and title | Windows only |
+| Real websites | `RUSTCHROME_COMPAT` loads example.com, Wikipedia, Hacker News and rust-lang.org, records status and title — 4/4 loaded, correct titles | Windows only |
 | Anti-fingerprinting | privacy probe, two fresh sessions, 18 invariants | both |
 | Session cleanup | probe asserts storage is empty in a fresh session | both |
+
+## Measurements
+
+Run 42908753713, both jobs green. Four-core runners, software rendering, no GPU,
+default start page.
+
+| | Linux (ubuntu-22.04) | Windows (windows-2022) |
+|---|---|---|
+| Processes in the tree | 3 | 8 |
+| Memory, whole tree | 474 MB | 306–313 MB |
+| Memory, 5 s apart | unchanged | +7 MB |
+| Idle CPU, 5 s window | ~0.4 % of one core | ~1.9 % of one core |
+| Startup (first load finished) | 1.9 s | 7.8 s |
+| Executable size | see CI artifact | 1.13 MB |
+
+Read those honestly:
+
+* **Summed resident memory overcounts.** Shared libraries and shared heap are
+  counted once per process, so the true unique cost is lower than the total.
+  Proportional set size would be the right metric and neither platform's shell
+  makes it easy to get, so the number above is an upper bound on a sum, not a
+  precise footprint.
+* **The Linux figure is dominated by a fresh `google.com`.** A blank window
+  measures much lower; the number here is "browser plus one real page".
+* **Windows startup is 7.8 s on this hardware.** Almost all of it is WebView2
+  runtime initialisation on a cold CI VM with no profile — the same build starts
+  noticeably faster on a warm machine. It is not a good number, and it is the
+  number we have.
+* Both figures are software-rendered. Hardware compositing is untested.
 
 ## What is not covered
 
