@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::store::{self, Bookmark};
+use crate::store::Bookmark;
 
 // ---------------------------------------------------------------- bookmarks
 
@@ -60,7 +60,9 @@ pub fn parse_netscape_html(html: &str) -> Vec<Bookmark> {
         let Some(tag_end) = rest.find('>') else { break };
         let attrs = &rest[..tag_end];
         let body = &rest[tag_end + 1..];
-        let Some(close) = body.find("</A>") else { break };
+        let Some(close) = body.find("</A>") else {
+            break;
+        };
 
         let href = attr_value(attrs, "HREF").or_else(|| attr_value(attrs, "href"));
         let tags = attr_value(attrs, "TAGS").unwrap_or_default();
@@ -164,8 +166,7 @@ pub fn chrome_bookmarks_path() -> Option<PathBuf> {
 /// Sniff the format instead of trusting the extension: exports are often saved
 /// without one, and Chrome's file has no extension at all.
 pub fn parse_bookmarks_file(path: &Path) -> Result<Vec<Bookmark>, String> {
-    let text = std::fs::read_to_string(path)
-        .map_err(|e| format!("{}: {e}", path.display()))?;
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let trimmed = text.trim_start();
     let items = if trimmed.starts_with('{') {
         parse_chrome_json(&text)
@@ -396,7 +397,10 @@ pub fn save_sites(rules: &[SiteRule]) -> std::io::Result<()> {
 pub fn host_of(url: &str) -> Option<String> {
     let (_, rest) = url.split_once("://")?;
     let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
-    let host_port = authority.rsplit_once('@').map(|(_, h)| h).unwrap_or(authority);
+    let host_port = authority
+        .rsplit_once('@')
+        .map(|(_, h)| h)
+        .unwrap_or(authority);
     let host = host_port.split(':').next().unwrap_or("");
     if host.is_empty() {
         None
@@ -473,8 +477,14 @@ mod tests {
             url: "https://a.test/".into(),
         }];
         let incoming = vec![
-            Bookmark { title: "A again".into(), url: "https://a.test/".into() },
-            Bookmark { title: "B".into(), url: "https://b.test/".into() },
+            Bookmark {
+                title: "A again".into(),
+                url: "https://a.test/".into(),
+            },
+            Bookmark {
+                title: "B".into(),
+                url: "https://b.test/".into(),
+            },
         ];
         let (added, skipped) = merge_bookmarks(&mut existing, incoming);
         assert_eq!((added, skipped), (1, 1));
@@ -496,7 +506,11 @@ mod tests {
 
     #[test]
     fn crash_detection() {
-        let mut s = SessionState { dirty: true, tabs: vec!["https://a".into()], ..Default::default() };
+        let mut s = SessionState {
+            dirty: true,
+            tabs: vec!["https://a".into()],
+            ..Default::default()
+        };
         assert!(crashed(&s));
         s.dirty = false;
         assert!(!crashed(&s));
@@ -509,7 +523,10 @@ mod tests {
             s.push_closed(&format!("https://x/{i}"));
         }
         assert_eq!(s.closed.len(), MAX_CLOSED);
-        assert_eq!(s.take_closed().unwrap(), format!("https://x/{}", MAX_CLOSED + 4));
+        assert_eq!(
+            s.take_closed().unwrap(),
+            format!("https://x/{}", MAX_CLOSED + 4)
+        );
     }
 
     #[test]
@@ -541,18 +558,38 @@ mod tests {
     #[test]
     fn site_rules_match_subdomains_and_most_specific_wins() {
         let rules = vec![
-            SiteRule { host: "example.com".into(), kind: "camera".into(), allow: true },
-            SiteRule { host: "meet.example.com".into(), kind: "camera".into(), allow: false },
+            SiteRule {
+                host: "example.com".into(),
+                kind: "camera".into(),
+                allow: true,
+            },
+            SiteRule {
+                host: "meet.example.com".into(),
+                kind: "camera".into(),
+                allow: false,
+            },
         ];
-        assert_eq!(site_decision(&rules, "https://example.com/x", "camera"), Some(true));
-        assert_eq!(site_decision(&rules, "https://a.meet.example.com/x", "camera"), Some(false));
+        assert_eq!(
+            site_decision(&rules, "https://example.com/x", "camera"),
+            Some(true)
+        );
+        assert_eq!(
+            site_decision(&rules, "https://a.meet.example.com/x", "camera"),
+            Some(false)
+        );
         assert_eq!(site_decision(&rules, "https://other.test", "camera"), None);
-        assert_eq!(site_decision(&rules, "https://example.com", "microphone"), None);
+        assert_eq!(
+            site_decision(&rules, "https://example.com", "microphone"),
+            None
+        );
     }
 
     #[test]
     fn host_parsing() {
-        assert_eq!(host_of("https://user:pw@Example.COM:8443/a"), Some("example.com".into()));
+        assert_eq!(
+            host_of("https://user:pw@Example.COM:8443/a"),
+            Some("example.com".into())
+        );
         assert_eq!(host_of("about:blank"), None);
     }
 }

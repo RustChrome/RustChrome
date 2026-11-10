@@ -29,10 +29,13 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::{chrome, downloads, pages, privacy, webview, window};
 
+/// Process start, for the startup measurement.
+pub static STARTUP: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
 // ---------------------------------------------------------------- global state
 
 thread_local! {
-    static APP: RefCell<Option<Rc<RefCell<App>>>> = RefCell::new(None);
+    static APP: RefCell<Option<Rc<RefCell<App>>>> = const { RefCell::new(None) };
 }
 
 pub fn install(app: Rc<RefCell<App>>) {
@@ -76,7 +79,7 @@ pub struct App {
     pub env: ICoreWebView2Environment,
     pub prefs: Prefs,
     pub chrome: Option<chrome::Chrome>,
-    pub tabs: Vec<Tab>,
+    tabs: Vec<Tab>,
     pub active: usize,
     pub next_id: u64,
     pub session: SessionState,
@@ -103,6 +106,11 @@ pub struct App {
     pub ua: String,
     /// `--privacy-probe <path>`: run the probe once and write the report there.
     pub probe: Option<String>,
+    /// `RUSTCHROME_COMPAT`: load a fixed list of sites, record the outcome and
+    /// exit. Used by the QA workflow to check real-world compatibility.
+    pub compat: Option<String>,
+    pub compat_queue: Vec<String>,
+    pub compat_results: Vec<Value>,
 }
 
 impl App {
@@ -141,6 +149,18 @@ impl App {
             seed: SessionSeed::new(),
             ua,
             probe,
+            compat: std::env::var("RUSTCHROME_COMPAT").ok(),
+            compat_queue: if std::env::var("RUSTCHROME_COMPAT").is_ok() {
+                vec![
+                    "https://example.com/".to_string(),
+                    "https://en.wikipedia.org/wiki/WebKit".to_string(),
+                    "https://news.ycombinator.com/".to_string(),
+                    "https://www.rust-lang.org/".to_string(),
+                ]
+            } else {
+                Vec::new()
+            },
+            compat_results: Vec::new(),
         }
     }
 
@@ -148,13 +168,19 @@ impl App {
     /// badly, the tabs it had are restored first.
     pub fn boot(&mut self) {
         let prev = self.session.clone();
-        if self.prefs.restore_session && features::crashed(&prev) {
-            self.trace(&format!("restoring {} tab(s) after a crash", prev.tabs.len()));
+        if self.compat.is_none() && self.prefs.restore_session && features::crashed(&prev) {
+            self.trace(&format!(
+                "restoring {} tab(s) after a crash",
+                prev.tabs.len()
+            ));
             for url in prev.tabs.iter().take(20) {
                 self.new_tab(Some(url.clone()), true);
             }
         }
-        self.trace(&format!("boot: hwnd={:?} runtime={}", self.hwnd.0, self.runtime));
+        self.trace(&format!(
+            "boot: hwnd={:?} runtime={}",
+            self.hwnd.0, self.runtime
+        ));
         window::apply_frame_theme(self.hwnd, self.prefs.is_dark());
         let env = self.env.clone();
         let hwnd = self.hwnd;
@@ -240,7 +266,11 @@ impl App {
             let h = NavigationStartingEventHandler::create(Box::new(|_s, args| {
                 if let Some(args) = args {
                     let mut p = PWSTR::null();
-                    let uri = if args.Uri(&mut p).is_ok() { webview::take(p) } else { String::new() };
+                    let uri = if args.Uri(&mut p).is_ok() {
+                        webview::take(p)
+                    } else {
+                        String::new()
+                    };
                     if !uri.is_empty() {
                         let _ = args.SetCancel(true);
                     }
@@ -267,7 +297,11 @@ impl App {
         self.chrome = Some(chrome::Chrome {
             controller: created.controller,
             webview: created.webview.clone(),
-            height_css: if self.prefs.show_bookmarks { 118.0 } else { 88.0 },
+            height_css: if self.prefs.show_bookmarks {
+                118.0
+            } else {
+                88.0
+            },
         });
         chrome::load(&created.webview);
         window::apply_frame_theme(self.hwnd, self.prefs.is_dark());
@@ -322,7 +356,8 @@ impl App {
                 self.tabs[idx].title = "Tab failed".to_string();
                 self.push_state();
                 if self.smoke {
-                    let out = std::env::var("RUSTCHROME_SMOKE_OUT").unwrap_or_else(|_| "smoke.txt".into());
+                    let out = std::env::var("RUSTCHROME_SMOKE_OUT")
+                        .unwrap_or_else(|_| "smoke.txt".into());
                     let _ = std::fs::write(out, format!("FAIL controller: {e}\n"));
                     unsafe {
                         let _ = DestroyWindow(self.hwnd);
@@ -338,7 +373,11 @@ impl App {
             Ok(created) => {
                 let is_active = idx == self.active;
                 privacy::configure(&created.webview, &self.prefs, false);
-                let ua = if self.prefs.antifp { Some(self.ua.clone()) } else { None };
+                let ua = if self.prefs.antifp {
+                    Some(self.ua.clone())
+                } else {
+                    None
+                };
                 privacy::set_user_agent(&created.webview, ua.as_deref());
                 let zoom = self.tabs[idx].zoom;
                 unsafe {
@@ -592,11 +631,34 @@ impl App {
         self.push_state();
     }
 
+    fn finish_compat(&mut self) {
+        let Some(path) = self.compat.clone() else {
+            return;
+        };
+        let body = serde_json::json!({
+            "total": self.compat_results.len(),
+            "ok": self.compat_results.iter().filter(|r| r["ok"] == true).count(),
+            "results": self.compat_results,
+        });
+        let _ = std::fs::write(
+            path,
+            serde_json::to_string_pretty(&body).unwrap_or_default(),
+        );
+        self.closing = true;
+        unsafe {
+            let _ = DestroyWindow(self.hwnd);
+        }
+    }
+
     /// The probe page publishes its report as the document title, so this needs
     /// no script evaluation and behaves identically on both shells.
     fn run_probe(&mut self) {
-        let Some(path) = self.probe.clone() else { return };
-        let Some(wv) = self.tabs.first().and_then(|t| t.webview.clone()) else { return };
+        let Some(path) = self.probe.clone() else {
+            return;
+        };
+        let Some(wv) = self.tabs.first().and_then(|t| t.webview.clone()) else {
+            return;
+        };
         let mut p = PWSTR::null();
         let title = unsafe {
             if wv.DocumentTitle(&mut p).is_ok() {
@@ -732,6 +794,11 @@ impl App {
         let Some(wv) = self.tabs.get(idx).and_then(|t| t.webview.clone()) else {
             return;
         };
+        if let Some(first) = self.compat_queue.first().cloned() {
+            self.compat_queue.remove(0);
+            self.load_in(idx, &first);
+            return;
+        }
         let html = if self.probe.is_some() {
             rc_core::privacy::probe_html()
         } else {
@@ -744,7 +811,8 @@ impl App {
         let hr = unsafe { wv.NavigateToString(&HSTRING::from(html)) };
         self.trace(&format!(
             "tab {} new tab page: {:?}",
-            self.tabs[idx].id, hr.is_ok()
+            self.tabs[idx].id,
+            hr.is_ok()
         ));
     }
 
@@ -769,7 +837,10 @@ impl App {
         let wants = self.tabs[idx].wants.clone();
         let Some(target) = wants else { return };
         if self.tabs[idx].retries >= 2 {
-            self.trace(&format!("tab {} giving up after 2 retries", self.tabs[idx].id));
+            self.trace(&format!(
+                "tab {} giving up after 2 retries",
+                self.tabs[idx].id
+            ));
             return;
         }
         self.tabs[idx].retries += 1;
@@ -803,7 +874,9 @@ impl App {
     }
 
     fn on_nav_starting(&mut self, id: u64, uri: String, allowed: bool) {
-        self.trace(&format!("tab {id} nav starting: allowed={allowed} uri={uri:?}"));
+        self.trace(&format!(
+            "tab {id} nav starting: allowed={allowed} uri={uri:?}"
+        ));
         if let Some(t) = self.tabs.iter_mut().find(|t| t.id == id) {
             t.loading = true;
             if allowed && !uri.is_empty() && uri != "about:blank" {
@@ -826,8 +899,20 @@ impl App {
     }
 
     fn on_title(&mut self, id: u64, title: String) {
+        let mut active_title = None;
         if let Some(t) = self.tabs.iter_mut().find(|t| t.id == id) {
             t.title = title;
+        }
+        if self.tabs.get(self.active).map(|t| t.id) == Some(id) {
+            active_title = self.tabs.get(self.active).map(|t| t.title.clone());
+        }
+        if let Some(title) = active_title {
+            let title = if title.is_empty() {
+                "RustChrome".to_string()
+            } else {
+                format!("{title} - RustChrome")
+            };
+            window::set_title(self.hwnd, &title);
         }
         self.push_state();
     }
@@ -866,8 +951,50 @@ impl App {
                 }
             }
         }
+        if ok && id == self.tabs.first().map(|t| t.id).unwrap_or(0) {
+            if let (Some(start), Ok(path)) =
+                (STARTUP.get(), std::env::var("RUSTCHROME_STARTUP_LOG"))
+            {
+                use std::io::Write;
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path)
+                {
+                    let _ = writeln!(f, "startup_ms={}", start.elapsed().as_millis());
+                }
+            }
+        }
         if self.smoke && id == self.tabs.first().map(|t| t.id).unwrap_or(0) && (ok || !canceled) {
             self.finish_smoke(ok, status);
+        }
+        if self.compat.is_some() && !canceled && id == self.tabs.first().map(|t| t.id).unwrap_or(0)
+        {
+            let url = self.tabs.first().map(|t| t.url.clone()).unwrap_or_default();
+            let title = self
+                .tabs
+                .first()
+                .map(|t| t.title.clone())
+                .unwrap_or_default();
+            let elapsed = STARTUP
+                .get()
+                .map(|s| s.elapsed().as_millis() as u64)
+                .unwrap_or(0);
+            self.compat_results.push(serde_json::json!({
+                "url": url,
+                "title": title,
+                "ok": ok,
+                "status": status,
+                "elapsed_ms": elapsed,
+            }));
+            if let Some(next) = self.compat_queue.first().cloned() {
+                self.compat_queue.remove(0);
+                self.load_in(0, &next);
+            } else {
+                self.finish_compat();
+            }
+            self.push_state();
+            return;
         }
         if ok
             && self.probe.is_some()
@@ -1031,7 +1158,11 @@ impl App {
         if url.is_empty() || t.is_new_tab {
             return;
         }
-        let title = if t.title.is_empty() { url.clone() } else { t.title.clone() };
+        let title = if t.title.is_empty() {
+            url.clone()
+        } else {
+            t.title.clone()
+        };
         if let Some(pos) = self.bookmarks.iter().position(|b| b.url == url) {
             self.bookmarks.remove(pos);
         } else {
@@ -1065,7 +1196,10 @@ impl App {
         let dest_str = dest.to_string_lossy().to_string();
 
         unsafe {
-            if args.SetResultFilePath(&HSTRING::from(dest_str.as_str())).is_err() {
+            if args
+                .SetResultFilePath(&HSTRING::from(dest_str.as_str()))
+                .is_err()
+            {
                 let _ = args.SetCancel(true);
                 return;
             }
@@ -1091,7 +1225,7 @@ impl App {
 
         // Attach progress/state reporting.
         unsafe {
-            if let Ok(op) = unsafe { args.DownloadOperation() } {
+            if let Ok(op) = args.DownloadOperation() {
                 self.dl_ops.push((id, op.clone()));
                 let h = webview2_com::BytesReceivedChangedEventHandler::create(Box::new(
                     move |sender, _a| {
@@ -1108,16 +1242,15 @@ impl App {
                 let mut t = 0i64;
                 let _ = op.add_BytesReceivedChanged(&h, &mut t);
 
-                let h = webview2_com::StateChangedEventHandler::create(Box::new(
-                    move |sender, _a| {
+                let h =
+                    webview2_com::StateChangedEventHandler::create(Box::new(move |sender, _a| {
                         if let Some(op) = sender {
                             let mut st = COREWEBVIEW2_DOWNLOAD_STATE(0);
                             let _ = op.State(&mut st);
                             with_app(move |a| a.update_download(id, -1, -1, Some(st)));
                         }
                         Ok(())
-                    },
-                ));
+                    }));
                 let mut t = 0i64;
                 let _ = op.add_StateChanged(&h, &mut t);
             }
@@ -1125,7 +1258,13 @@ impl App {
         self.push_state();
     }
 
-    fn update_download(&mut self, id: u64, got: i64, total: i64, state: Option<COREWEBVIEW2_DOWNLOAD_STATE>) {
+    fn update_download(
+        &mut self,
+        id: u64,
+        got: i64,
+        total: i64,
+        state: Option<COREWEBVIEW2_DOWNLOAD_STATE>,
+    ) {
         if let Some(d) = self.downloads.iter_mut().find(|d| d.id == id) {
             if got >= 0 {
                 d.received = got;
@@ -1150,7 +1289,11 @@ impl App {
                 }
                 for idx in 0..self.tabs.len() {
                     if key == "antifp" {
-                        let ua = if self.prefs.antifp { Some(self.ua.clone()) } else { None };
+                        let ua = if self.prefs.antifp {
+                            Some(self.ua.clone())
+                        } else {
+                            None
+                        };
                         if let Some(wv) = self.tabs[idx].webview.clone() {
                             privacy::set_user_agent(&wv, ua.as_deref());
                         }
@@ -1168,7 +1311,11 @@ impl App {
             }
             "show_bookmarks" => {
                 if let Some(ch) = &mut self.chrome {
-                    ch.height_css = if self.prefs.show_bookmarks { 118.0 } else { 88.0 };
+                    ch.height_css = if self.prefs.show_bookmarks {
+                        118.0
+                    } else {
+                        88.0
+                    };
                 }
                 self.relayout();
             }
@@ -1205,12 +1352,14 @@ impl App {
         };
         match features::parse_bookmarks_file(&source) {
             Ok(items) => {
-                let (added, skipped) =
-                    features::merge_bookmarks(&mut self.bookmarks, items);
+                let (added, skipped) = features::merge_bookmarks(&mut self.bookmarks, items);
                 let _ = store::save_bookmarks(&self.bookmarks);
                 self.notice = Some(format!(
                     "Imported {added} bookmark(s), skipped {skipped} duplicate(s) from {}",
-                    source.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()
+                    source
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_default()
                 ));
             }
             Err(e) => self.notice = Some(format!("Import failed: {e}")),
@@ -1223,7 +1372,11 @@ impl App {
         let html = features::export_netscape(&self.bookmarks);
         match std::fs::write(&dest, html) {
             Ok(()) => {
-                self.notice = Some(format!("Exported {} bookmark(s) to {}", self.bookmarks.len(), dest.display()));
+                self.notice = Some(format!(
+                    "Exported {} bookmark(s) to {}",
+                    self.bookmarks.len(),
+                    dest.display()
+                ));
                 downloads::reveal(&dest.to_string_lossy());
             }
             Err(e) => self.notice = Some(format!("Export failed: {e}")),
@@ -1233,14 +1386,21 @@ impl App {
 
     fn add_engine(&mut self, label: &str, template: &str) {
         let Some(t) = features::normalize_engine_template(template) else {
-            self.notice = Some("Search engine template must be an http(s) URL containing {q}".into());
+            self.notice =
+                Some("Search engine template must be an http(s) URL containing {q}".into());
             self.push_state();
             return;
         };
-        let label = if label.trim().is_empty() { "Custom" } else { label.trim() };
+        let label = if label.trim().is_empty() {
+            "Custom"
+        } else {
+            label.trim()
+        };
         let id = format!(
             "custom-{}",
-            label.to_ascii_lowercase().replace(|c: char| !c.is_alphanumeric(), "-")
+            label
+                .to_ascii_lowercase()
+                .replace(|c: char| !c.is_alphanumeric(), "-")
         );
         self.prefs.engines.retain(|e| e.id != id);
         self.prefs.engines.push(features::CustomEngine {
@@ -1546,10 +1706,18 @@ impl App {
                     self.cancel_download(id);
                 }
             }
-            "back" => self.with_active(|wv| unsafe { let _ = wv.GoBack(); }),
-            "forward" => self.with_active(|wv| unsafe { let _ = wv.GoForward(); }),
-            "reload" => self.with_active(|wv| unsafe { let _ = wv.Reload(); }),
-            "stop" => self.with_active(|wv| unsafe { let _ = wv.Stop(); }),
+            "back" => self.with_active(|wv| unsafe {
+                let _ = wv.GoBack();
+            }),
+            "forward" => self.with_active(|wv| unsafe {
+                let _ = wv.GoForward();
+            }),
+            "reload" => self.with_active(|wv| unsafe {
+                let _ = wv.Reload();
+            }),
+            "stop" => self.with_active(|wv| unsafe {
+                let _ = wv.Stop();
+            }),
             "home" => {
                 let idx = self.active;
                 self.show_new_tab(idx);
@@ -1635,7 +1803,9 @@ impl App {
             "focusurl" => {
                 if let Some(ch) = &self.chrome {
                     unsafe {
-                        let _ = ch.controller.MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+                        let _ = ch
+                            .controller
+                            .MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
                     }
                 }
             }
@@ -1838,13 +2008,23 @@ impl App {
             .clamp(0.0, h as f64) as i32;
 
         if let Some(ch) = &self.chrome {
-            let rect = RECT { left: 0, top: 0, right: w, bottom: chrome_px };
+            let rect = RECT {
+                left: 0,
+                top: 0,
+                right: w,
+                bottom: chrome_px,
+            };
             webview::set_rasterization(&ch.controller, scale);
             unsafe {
                 let _ = ch.controller.SetBounds(rect);
             }
         }
-        let content = RECT { left: 0, top: chrome_px, right: w, bottom: h };
+        let content = RECT {
+            left: 0,
+            top: chrome_px,
+            right: w,
+            bottom: h,
+        };
         for t in &self.tabs {
             if let Some(c) = &t.controller {
                 webview::set_rasterization(c, scale);
@@ -1876,11 +2056,7 @@ impl App {
 
     fn finish_smoke(&self, ok: bool, status: i32) {
         let out = std::env::var("RUSTCHROME_SMOKE_OUT").unwrap_or_else(|_| "smoke.txt".into());
-        let url = self
-            .tabs
-            .first()
-            .map(|t| t.url.clone())
-            .unwrap_or_default();
+        let url = self.tabs.first().map(|t| t.url.clone()).unwrap_or_default();
         let text = if ok {
             format!("OK url={url} runtime={}\n", self.runtime)
         } else {
@@ -2038,7 +2214,11 @@ pub unsafe extern "system" fn dispatch(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
 
 impl App {
     fn focus_active_tab(&mut self) {
-        if let Some(c) = self.tabs.get(self.active).and_then(|t| t.controller.clone()) {
+        if let Some(c) = self
+            .tabs
+            .get(self.active)
+            .and_then(|t| t.controller.clone())
+        {
             unsafe {
                 let _ = c.MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
             }

@@ -41,9 +41,13 @@ pub fn new_tab_html(engine: &str, dark: bool) -> String {
     };
 
     let (bg, fg, field, field_border, btn_bg, btn_fg, foot) = if dark {
-        ("#202124", "#e8eaed", "#202124", "#5f6368", "#303134", "#e8eaed", "#9aa0a6")
+        (
+            "#202124", "#e8eaed", "#202124", "#5f6368", "#303134", "#e8eaed", "#9aa0a6",
+        )
     } else {
-        ("#ffffff", "#202124", "#ffffff", "#dfe1e5", "#f8f9fa", "#3c4043", "#70757a")
+        (
+            "#ffffff", "#202124", "#ffffff", "#dfe1e5", "#f8f9fa", "#3c4043", "#70757a",
+        )
     };
 
     format!(
@@ -91,7 +95,12 @@ document.getElementById('lucky').addEventListener('click', () => {{
         version = env!("CARGO_PKG_VERSION"),
         template_json = serde_json::to_string(template).unwrap_or_else(|_| "\"\"".into()),
         root_json = serde_json::to_string(
-            template.split('/').take(3).collect::<Vec<_>>().join("/").as_str()
+            template
+                .split('/')
+                .take(3)
+                .collect::<Vec<_>>()
+                .join("/")
+                .as_str()
         )
         .unwrap_or_else(|_| "\"\"".into()),
     )
@@ -156,7 +165,10 @@ pub fn extensions_html(files: &[PathBuf], dir: &str) -> String {
     for f in files {
         rows.push_str(&format!(
             "<tr><td class=n>{}</td><td class=u>{}</td></tr>",
-            esc(&f.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()),
+            esc(&f
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default()),
             esc(&f.display().to_string()),
         ));
     }

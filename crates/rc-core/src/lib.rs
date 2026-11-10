@@ -17,8 +17,16 @@ pub const SEARCH_ENGINES: &[(&str, &str, &str)] = &[
     ("ddg", "DuckDuckGo", "https://duckduckgo.com/?q={q}"),
     ("google", "Google", "https://www.google.com/search?q={q}"),
     ("bing", "Bing", "https://www.bing.com/search?q={q}"),
-    ("brave", "Brave Search", "https://search.brave.com/search?q={q}"),
-    ("startpage", "Startpage", "https://www.startpage.com/sp/search?query={q}"),
+    (
+        "brave",
+        "Brave Search",
+        "https://search.brave.com/search?q={q}",
+    ),
+    (
+        "startpage",
+        "Startpage",
+        "https://www.startpage.com/sp/search?query={q}",
+    ),
 ];
 
 pub fn search_template(id: &str) -> &'static str {
@@ -35,7 +43,9 @@ pub fn encode_query(q: &str) -> String {
     let mut out = String::with_capacity(q.len());
     for b in q.as_bytes() {
         match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(*b as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(*b as char)
+            }
             b' ' => out.push_str("%20"),
             _ => out.push_str(&format!("%{:02X}", b)),
         }
@@ -195,7 +205,10 @@ mod tests {
     #[test]
     fn localhost_with_port_stays_a_host() {
         assert_eq!(normalize("localhost:8080", "ddg"), "https://localhost:8080");
-        assert_eq!(normalize("example.com:8443/x", "ddg"), "https://example.com:8443/x");
+        assert_eq!(
+            normalize("example.com:8443/x", "ddg"),
+            "https://example.com:8443/x"
+        );
     }
 
     #[test]
@@ -204,7 +217,9 @@ mod tests {
         assert!(is_allowed_navigation("about:blank"));
         // NavigateToString lands here; blocking it would break every
         // internal page.
-        assert!(is_allowed_navigation("data:text/html;charset=utf-8,<h1>x</h1>"));
+        assert!(is_allowed_navigation(
+            "data:text/html;charset=utf-8,<h1>x</h1>"
+        ));
     }
 
     #[test]

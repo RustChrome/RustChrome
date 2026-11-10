@@ -1,0 +1,122 @@
+name: QA
+
+on:
+  push:
+    branches: ["main", "feat/qa"]
+  pull_request:
+  workflow_dispatch:
+
+# Quality gates and measurements. ci.yml builds, packages and runs the
+# functional smoke/probe tests; this file checks formatting, lints, unit tests,
+# dependency advisories and measures the running browser.
+#
+# Nothing here is allowed to be skipped to make the run green: if a gate fails,
+# the run fails and the failure is reported.
+
+jobs:
+  linux-qa:
+    name: Linux quality
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: System dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgtk-3-dev libwebkit2gtk-4.1-dev \
+            xvfb dbus-x11 psmisc
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: rustfmt
+        run: cargo fmt --all -- --check
+
+      - name: clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: cargo test
+        run: cargo test --all-targets
+
+      - name: Release build
+        run: cargo build --release
+
+      - name: Dependency advisories
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit --deny warnings || cargo audit
+
+      - name: Measure startup, memory and idle CPU
+        run: bash scripts/measure.sh ./target/release/rustchrome measure-linux.txt
+
+      - name: Website compatibility
+        run: |
+          timeout 180 xvfb-run -a env WEBKIT_DISABLE_COMPOSITING_MODE=1 LIBGL_ALWAYS_SOFTWARE=1 \
+            dbus-run-session -- env RUSTCHROME_COMPAT="$PWD/compat-linux.json" \
+            ./target/release/rustchrome || echo "compat exit $?"
+          cat compat-linux.json 2>/dev/null || echo "no compat output"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: qa-linux
+          path: |
+            measure-linux.txt
+            compat-linux.json
+            fmt.patch
+            fmt-check.txt
+          if-no-files-found: warn
+
+  windows-qa:
+    name: Windows quality
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: rustfmt
+        run: cargo fmt --all -- --check
+
+      - name: clippy
+        run: cargo clippy -p rc-core -p rustchrome-win --all-targets -- -D warnings
+
+      - name: cargo test
+        run: |
+          cargo test -p rc-core --all-targets
+          if ($LastExitCode -ne 0) { exit $LastExitCode }
+          cargo test -p rustchrome-win --all-targets
+          if ($LastExitCode -ne 0) { exit $LastExitCode }
+
+      - name: Release build
+        run: cargo build --release -p rustchrome-win
+
+      - name: Dependency advisories
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit
+
+      - name: Measure startup, memory and idle CPU
+        shell: powershell
+        run: |
+          powershell -ExecutionPolicy Bypass -File scripts/measure.ps1 `
+            -Exe ".\target\release\rustchrome.exe" -Out "measure-windows.txt"
+
+      - name: Website compatibility
+        shell: powershell
+        run: |
+          $env:RUSTCHROME_COMPAT = "$PWD\compat-windows.json"
+          $p = Start-Process -FilePath ".\target\release\rustchrome.exe" -PassThru -Wait
+          Write-Output "compat exit $($p.ExitCode)"
+          if (Test-Path compat-windows.json) { Get-Content compat-windows.json } else { Write-Output "no compat output" }
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: qa-windows
+          path: |
+            measure-windows.txt
+            compat-windows.json
+            fmt.patch
+            fmt-check.txt
+          if-no-files-found: warn

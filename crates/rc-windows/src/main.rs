@@ -28,6 +28,8 @@ use windows::Win32::UI::HiDpi::{
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 fn main() {
+    // First thing in the process: the startup measurement is relative to this.
+    let _ = app::STARTUP.set(std::time::Instant::now());
     unsafe {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
@@ -62,7 +64,8 @@ fn run(smoke: bool, probe: Option<String>) -> Result<(), String> {
             .to_string()
     })?;
 
-    if !smoke && probe.is_none() {
+    let compat = std::env::var_os("RUSTCHROME_COMPAT").is_some();
+    if !smoke && probe.is_none() && !compat {
         ensure_single_instance();
     }
 
@@ -101,20 +104,17 @@ fn run(smoke: bool, probe: Option<String>) -> Result<(), String> {
 /// One browser per user session; a second launch focuses the existing window.
 fn ensure_single_instance() {
     unsafe {
-        match CreateMutexW(None, false, w!("Local\\RustChrome.SingleInstance.v1")) {
-            Ok(handle) => {
-                // GetLastError must be checked immediately after the call.
-                if GetLastError() == ERROR_ALREADY_EXISTS {
-                    if let Ok(existing) = FindWindowW(window::CLASS, PCWSTR::null()) {
-                        let _ = ShowWindow(existing, SW_RESTORE);
-                        let _ = SetForegroundWindow(existing);
-                    }
-                    std::process::exit(0);
+        if let Ok(handle) = CreateMutexW(None, false, w!("Local\\RustChrome.SingleInstance.v1")) {
+            // GetLastError must be checked immediately after the call.
+            if GetLastError() == ERROR_ALREADY_EXISTS {
+                if let Ok(existing) = FindWindowW(window::CLASS, PCWSTR::null()) {
+                    let _ = ShowWindow(existing, SW_RESTORE);
+                    let _ = SetForegroundWindow(existing);
                 }
-                // Hold the handle for the process lifetime; the OS closes it.
-                let _ = handle;
+                std::process::exit(0);
             }
-            Err(_) => {}
+            // Hold the handle for the process lifetime; the OS closes it.
+            let _ = handle;
         }
     }
 }

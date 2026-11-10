@@ -56,16 +56,23 @@ yours: pages render with WebKit, everything else is written here in Rust.
 Most browsers sell you privacy as a settings page. Here it's the state the browser
 boots into.
 
-**Tor‑style anti‑fingerprinting.** Every session presents the same generic machine:
-a fixed Firefox/Windows user agent, 1280×800 screen, 1× pixel ratio, 2 cores, 4 GB RAM,
-English-only, UTC clock, zero plugins, canvas reads salted with deterministic noise,
-WebGL off and its renderer masked, WebRTC and media devices closed, every permission
-prompt denied. Sites see "a browser", not "you".
+**One generic machine, every session.** A fixed 1280×800 screen, 1× pixel ratio,
+2 cores, 4 GB RAM, English-only, UTC clock, zero plugins, canvas reads salted with
+per‑session noise (stable while the session lasts, different every launch, so the salt
+cannot be used to recognise you next time), WebGL and WebRTC neutralised in **Strict
+mode**, media devices closed, every permission prompt denied. The user agent matches the
+rendering engine — WebKitGTK identifies as WebKit, WebView2 as Chromium — because a
+browser that lies about its engine is a fingerprint of its own. Sites see "a browser",
+not "you".
 
-**Your session dies with the window.** Closing the browser clears the entire web data
-store first — cookies, localStorage, IndexedDB, service workers, caches, HSTS — and only
-then exits. Need a clean slate mid‑session? **⋮ → New identity** wipes everything and
-hands you a single fresh tab.
+This makes you one of many. It is **not** anonymity: it does not hide your IP address,
+and it is not Tor.
+
+**Private Session by default.** Closing the browser clears the entire web data store
+first — cookies, localStorage, IndexedDB, service workers, caches, HSTS — and only then
+exits. Switch to a Standard Session in Settings if you want to stay signed in. Need a
+clean slate mid‑session? **⋮ → New identity** wipes everything, rotates the canvas salt
+and hands you a single fresh tab.
 
 **No history file. None.** There is no history database to leak, subpoena or sync.
 
@@ -76,8 +83,16 @@ statistics". The only connections made are the pages you ask for.
 
 ### Install
 
-Grab `rustchrome-0.1.0-x86_64-linux.tar.gz` from the [releases page](../../releases),
-check the `.sha256`, and run:
+**Windows 10/11 — portable.** CI builds `rustchrome-0.1.0-x86_64-windows.zip` on
+every push; it is in the run's artifacts, and no public release is published yet.
+Unzip anywhere and run `rustchrome.exe` — nothing is installed and nothing is
+written to the registry. The Microsoft Edge WebView2 Runtime is required: it ships
+with Windows 11 and current Windows 10, otherwise Microsoft's Evergreen bootstrapper
+installs it for free. The build links a static C runtime, so no Visual C++
+redistributable is needed. Build steps and limitations: [`docs/WINDOWS.md`](docs/WINDOWS.md).
+
+**Linux.** Grab `rustchrome-0.1.0-x86_64-linux.tar.gz` from the
+[releases page](../../releases), check the `.sha256`, and run:
 
 ```bash
 tar xzf rustchrome-0.1.0-x86_64-linux.tar.gz
@@ -86,6 +101,10 @@ cd rustchrome-0.1.0-x86_64-linux
 ```
 
 Requires GTK3 and WebKitGTK 4.1 (`gtk3`, `webkit2gtk-4.1`).
+
+What the protections actually do, and what they do not:
+[`docs/PRIVACY.md`](docs/PRIVACY.md). Known bugs and what is untested:
+[`docs/QA.md`](docs/QA.md).
 
 <details>
 <summary><b>Build from source</b></summary>

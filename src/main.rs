@@ -7,92 +7,49 @@ use gtk::{
     Application, ApplicationWindow, Box as GtkBox, Button, CssProvider, Entry, EventBox, Image,
     Label, Orientation, ProgressBar, SearchEntry, Separator, Stack, StackTransitionType,
 };
+use rc_core::privacy::{antifp_js, SessionSeed};
 use serde::{Deserialize, Serialize};
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::{Rc, Weak};
-use rc_core::privacy::{antifp_js, SessionSeed};
 use webkit2gtk::{
-    CookieAcceptPolicy, CookieManagerExt, DownloadExt, FindControllerExt, LoadEvent, SettingsExt,
-    URIRequestExt,
-    UserContentInjectedFrames, WebsiteDataManagerExt,
+    CookieAcceptPolicy, CookieManagerExt, DownloadExt, FindControllerExt, LoadEvent,
     NavigationPolicyDecision, NavigationPolicyDecisionExt, PolicyDecisionExt, PolicyDecisionType,
-    UserContentManager,
+    SettingsExt, URIRequestExt, UserContentInjectedFrames, UserContentManager,
     UserContentManagerExt, UserStyleLevel, UserStyleSheet, WebContext, WebContextExt, WebView,
-    WebViewExt,
+    WebViewExt, WebsiteDataManagerExt,
 };
 
 const HOME: &str = "https://www.google.com/";
 const NEW_TAB_PAGE: &str = "about:rustchrome-newtab";
 const EXT_PAGE: &str = "about:rustchrome-extensions";
-const TOR_UA: &str = "Mozilla/5.0 (Windows NT 10.0; rv:128.0) Gecko/20100101 Firefox/128.0";
 
-/// Anti-fingerprinting shim: everything a page can use to recognise the machine
-/// is pinned to one generic profile, the way Tor Browser does it.
-const ANTI_FP_JS: &str = r#"
-(() => {
-  const UA = 'Mozilla/5.0 (Windows NT 10.0; rv:128.0) Gecko/20100101 Firefox/128.0';
-  const W = 1280, H = 800, D = 24;
-  const def = (o, p, v) => { try { Object.defineProperty(o, p, { get: () => v, configurable: true }); } catch (e) {} };
-  if (screen) {
-    def(screen, 'width', W); def(screen, 'height', H);
-    def(screen, 'availWidth', W); def(screen, 'availHeight', H - 40);
-    def(screen, 'colorDepth', D); def(screen, 'pixelDepth', D);
-    def(screen, 'orientation', { angle: 0, type: 'landscape-primary' });
-  }
-  def(window, 'devicePixelRatio', 1);
-  def(window, 'outerWidth', W); def(window, 'outerHeight', H);
-  if (navigator) {
-    def(navigator, 'userAgent', UA);
-    def(navigator, 'appVersion', UA.replace('Mozilla/', ''));
-    def(navigator, 'platform', 'Win32');
-    def(navigator, 'hardwareConcurrency', 2);
-    def(navigator, 'deviceMemory', 4);
-    def(navigator, 'languages', Object.freeze(['en-US', 'en']));
-    def(navigator, 'language', 'en-US');
-    def(navigator, 'plugins', Object.freeze([]));
-    def(navigator, 'mimeTypes', Object.freeze([]));
-    def(navigator, 'doNotTrack', '1');
-    if (navigator.mediaDevices) {
-      navigator.mediaDevices.enumerateDevices = () => Promise.resolve([]);
-      navigator.mediaDevices.getUserMedia = () => Promise.reject(new Error('blocked'));
-    }
-  }
-  // canvas fingerprint noise
-  const pts = (d) => { for (let i = 0; i < d.data.length; i += 997) d.data[i] = (d.data[i] + 1) & 255; };
-  try {
-    const gid = CanvasRenderingContext2D.prototype.getImageData;
-    CanvasRenderingContext2D.prototype.getImageData = function (...a) { const d = gid.apply(this, a); pts(d); return d; };
-    const tdu = HTMLCanvasElement.prototype.toDataURL;
-    HTMLCanvasElement.prototype.toDataURL = function (...a) {
-      try { const c = this.getContext('2d');
-        if (c) { const d = c.getImageData(0, 0, this.width, this.height); pts(d); c.putImageData(d, 0, 0); }
-      } catch (e) {}
-      return tdu.apply(this, a);
-    };
-  } catch (e) {}
-  // WebGL renderer masking
-  try {
-    const gp = WebGLRenderingContext.prototype.getParameter;
-    WebGLRenderingContext.prototype.getParameter = function (p) {
-      if (p === 37445 || p === 37446) return 'Generic Renderer';
-      return gp.apply(this, arguments);
-    };
-  } catch (e) {}
-  // fixed timezone
-  try {
-    Date.prototype.getTimezoneOffset = () => 0;
-    const loc = Intl.DateTimeFormat.prototype.resolvedOptions;
-    Intl.DateTimeFormat.prototype.resolvedOptions = function () {
-      const o = loc.apply(this, arguments); o.timeZone = 'UTC'; return o;
-    };
-  } catch (e) {}
-})();
-"#;
 const BOOKMARKS_PAGE: &str = "about:rustchrome-bookmarks";
 const PRIVACY_PAGE: &str = "about:rustchrome-privacy";
 
 /// RUSTCHROME_PROBE=<file>: load the probe page, dump its report, exit.
+/// Reported once, on the first finished load, so the QA workflow can measure
+/// startup without guessing.
+static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+static STARTUP_LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn log_startup_once() {
+    use std::io::Write;
+    if STARTUP_LOGGED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    let (Some(start), Ok(path)) = (START.get(), std::env::var("RUSTCHROME_STARTUP_LOG")) else {
+        return;
+    };
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = writeln!(f, "startup_ms={}", start.elapsed().as_millis());
+    }
+}
+
 fn probe_path() -> Option<PathBuf> {
     std::env::var_os("RUSTCHROME_PROBE").map(PathBuf::from)
 }
@@ -107,7 +64,6 @@ fn finish_probe(view: &WebView, path: &PathBuf) {
     let _ = std::fs::write(path, text);
     std::process::exit(0);
 }
-
 
 const NEW_TAB_HTML: &str = r#"<!doctype html><html><head><meta charset="utf-8"><title>New Tab</title><style>
 *{box-sizing:border-box}
@@ -218,7 +174,6 @@ struct Bookmark {
     title: String,
     url: String,
 }
-
 
 struct Tab {
     id: u64,
@@ -450,7 +405,9 @@ fn save_force_dark(force: bool) {
 /// The app logo, compiled into the binary (no external asset needed at runtime).
 fn app_icon() -> Option<gtk::gdk_pixbuf::Pixbuf> {
     let loader = gtk::gdk_pixbuf::PixbufLoader::new();
-    loader.write(include_bytes!("../assets/icon-256.png")).ok()?;
+    loader
+        .write(include_bytes!("../assets/icon-256.png"))
+        .ok()?;
     loader.close().ok()?;
     loader.pixbuf()
 }
@@ -484,7 +441,11 @@ fn scale_css(css: &str, scale: f64) -> String {
             let num: String = chars[start..i].iter().collect();
             if i + 1 < chars.len() && chars[i] == 'p' && chars[i + 1] == 'x' {
                 let v: f64 = num.parse().unwrap_or(1.0);
-                let scaled = if v == 0.0 { 0.0 } else { (v * scale).round().max(1.0) };
+                let scaled = if v == 0.0 {
+                    0.0
+                } else {
+                    (v * scale).round().max(1.0)
+                };
                 out.push_str(&format!("{}px", scaled as i64));
                 i += 2;
                 continue;
@@ -510,7 +471,10 @@ fn scale_images(w: &gtk::Widget, px: i32) {
 }
 
 fn set_icon(b: &Button, name: &str) {
-    b.set_image(Some(&Image::from_icon_name(Some(name), gtk::IconSize::LargeToolbar)));
+    b.set_image(Some(&Image::from_icon_name(
+        Some(name),
+        gtk::IconSize::LargeToolbar,
+    )));
 }
 
 impl App {
@@ -571,10 +535,20 @@ impl App {
         avatar_area.connect_draw(|_, cr| {
             let size = 30.0_f64;
             cr.set_source_rgb(0.102, 0.451, 0.910); // #1a73e8
-            cr.arc(size / 2.0, size / 2.0, size / 2.0, 0.0, std::f64::consts::PI * 2.0);
+            cr.arc(
+                size / 2.0,
+                size / 2.0,
+                size / 2.0,
+                0.0,
+                std::f64::consts::PI * 2.0,
+            );
             let _ = cr.fill();
             cr.set_source_rgb(1.0, 1.0, 1.0);
-            cr.select_font_face("Sans", gtk::cairo::FontSlant::Normal, gtk::cairo::FontWeight::Bold);
+            cr.select_font_face(
+                "Sans",
+                gtk::cairo::FontSlant::Normal,
+                gtk::cairo::FontWeight::Bold,
+            );
             cr.set_font_size(13.0);
             let ext = cr.text_extents("T").map(|e| e.width()).unwrap_or(0.0);
             cr.move_to((size - ext) / 2.0, size / 2.0 + 4.5);
@@ -753,11 +727,13 @@ impl App {
         }
         {
             let a = self.rc();
-            self.back.connect_clicked(move |_| a.with_current(|v| v.go_back()));
+            self.back
+                .connect_clicked(move |_| a.with_current(|v| v.go_back()));
         }
         {
             let a = self.rc();
-            self.forward.connect_clicked(move |_| a.with_current(|v| v.go_forward()));
+            self.forward
+                .connect_clicked(move |_| a.with_current(|v| v.go_forward()));
         }
         {
             let a = self.rc();
@@ -850,16 +826,24 @@ impl App {
                 let ctrl = ev.state().contains(ModifierType::CONTROL_MASK);
                 let alt = ev.state().contains(ModifierType::MOD1_MASK);
                 let shift = ev.state().contains(ModifierType::SHIFT_MASK);
-                let key = ev.keyval().name().map(|s| s.to_string()).unwrap_or_default();
+                let key = ev
+                    .keyval()
+                    .name()
+                    .map(|s| s.to_string())
+                    .unwrap_or_default();
                 match (ctrl, alt, key.as_str()) {
                     (true, _, "t") | (true, _, "T") if shift => a.reopen_closed(),
-                    (true, _, "t") | (true, _, "T") => { a.new_tab(NEW_TAB_PAGE); }
+                    (true, _, "t") | (true, _, "T") => {
+                        a.new_tab(NEW_TAB_PAGE);
+                    }
                     (true, _, "w") | (true, _, "W") => a.close_active_tab(),
                     (true, _, "l") | (true, _, "L") => {
                         a.entry.grab_focus();
                         a.entry.select_region(0, -1);
                     }
-                    (true, _, "r") | (true, _, "R") | (false, _, "F5") => a.with_current(|v| v.reload()),
+                    (true, _, "r") | (true, _, "R") | (false, _, "F5") => {
+                        a.with_current(|v| v.reload())
+                    }
                     (true, _, "q") => {
                         mark_session_clean();
                         std::process::exit(0);
@@ -911,8 +895,7 @@ impl App {
                 self.new_tab(u);
             }
         } else {
-            let start =
-                std::env::var("RUSTCHROME_START_URL").unwrap_or_else(|_| HOME.to_string());
+            let start = std::env::var("RUSTCHROME_START_URL").unwrap_or_else(|_| HOME.to_string());
             for u in start.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
                 self.new_tab(u);
             }
@@ -926,7 +909,8 @@ impl App {
         }
         self.progress.hide();
         self.findbar.hide();
-        self.bookmarksbar.set_visible(!self.bookmarks.borrow().is_empty());
+        self.bookmarksbar
+            .set_visible(!self.bookmarks.borrow().is_empty());
     }
 
     fn current_tab(&self) -> Option<Rc<Tab>> {
@@ -1041,7 +1025,9 @@ impl App {
                 if let Some(path) = probe_path() {
                     finish_probe(v, &path);
                 }
-                let (Some(a), Some(t)) = (a.upgrade(), tw.upgrade()) else { return };
+                let (Some(a), Some(t)) = (a.upgrade(), tw.upgrade()) else {
+                    return;
+                };
                 *t.title.borrow_mut() = v.title().map(|s| s.to_string()).unwrap_or_default();
                 t.refresh_label();
                 if a.index_of(&t) == a.active.get() {
@@ -1053,9 +1039,15 @@ impl App {
             let a = Rc::downgrade(&self.rc());
             let tw = Rc::downgrade(&tab);
             view.connect_uri_notify(move |v| {
-                let (Some(a), Some(t)) = (a.upgrade(), tw.upgrade()) else { return };
+                let (Some(a), Some(t)) = (a.upgrade(), tw.upgrade()) else {
+                    return;
+                };
                 let raw = v.uri().map(|s| s.to_string()).unwrap_or_default();
-                let shown = if raw == "about:blank" { String::new() } else { raw };
+                let shown = if raw == "about:blank" {
+                    String::new()
+                } else {
+                    raw
+                };
                 *t.uri.borrow_mut() = shown;
                 if a.index_of(&t) == a.active.get() {
                     if !a.entry.has_focus() && a.entry.text() != t.uri.borrow().as_str() {
@@ -1065,13 +1057,17 @@ impl App {
                 }
             });
         }
-        {
-        }
+        {}
         {
             let a = Rc::downgrade(&self.rc());
             let tw = Rc::downgrade(&tab);
             view.connect_load_changed(move |_, ev| {
-                let (Some(a), Some(t)) = (a.upgrade(), tw.upgrade()) else { return };
+                if ev == LoadEvent::Finished {
+                    log_startup_once();
+                }
+                let (Some(a), Some(t)) = (a.upgrade(), tw.upgrade()) else {
+                    return;
+                };
                 if a.index_of(&t) != a.active.get() {
                     return;
                 }
@@ -1157,7 +1153,9 @@ impl App {
             let a = Rc::downgrade(&self.rc());
             let tw = Rc::downgrade(&tab);
             label_btn.connect_clicked(move |_| {
-                let (Some(a), Some(t)) = (a.upgrade(), tw.upgrade()) else { return };
+                let (Some(a), Some(t)) = (a.upgrade(), tw.upgrade()) else {
+                    return;
+                };
                 a.activate(&t);
             });
         }
@@ -1165,7 +1163,9 @@ impl App {
             let a = Rc::downgrade(&self.rc());
             let tw = Rc::downgrade(&tab);
             close_btn.connect_clicked(move |_| {
-                let (Some(a), Some(t)) = (a.upgrade(), tw.upgrade()) else { return };
+                let (Some(a), Some(t)) = (a.upgrade(), tw.upgrade()) else {
+                    return;
+                };
                 a.close_tab(&t);
             });
         }
@@ -1177,12 +1177,20 @@ impl App {
     }
 
     fn index_of(&self, tab: &Rc<Tab>) -> usize {
-        self.tabs.borrow().iter().position(|t| t.id == tab.id).unwrap_or(usize::MAX)
+        self.tabs
+            .borrow()
+            .iter()
+            .position(|t| t.id == tab.id)
+            .unwrap_or(usize::MAX)
     }
 
     fn update_window_title(&self, tab: &Rc<Tab>) {
         let title = tab.title.borrow().clone();
-        let title = if title.is_empty() { "New Tab".to_string() } else { title };
+        let title = if title.is_empty() {
+            "New Tab".to_string()
+        } else {
+            title
+        };
         self.window.set_title(&format!("{} - RustChrome", title));
     }
 
@@ -1199,7 +1207,8 @@ impl App {
                 t.tab_box.style_context().remove_class("active");
             }
         }
-        self.stack.set_visible_child_name(&format!("tab-{}", tab.id));
+        self.stack
+            .set_visible_child_name(&format!("tab-{}", tab.id));
         let z = tab.zoom.get();
         tab.view.set_zoom_level(z);
         self.zoom.set(z);
@@ -1245,7 +1254,10 @@ impl App {
         let files = ext_files();
         let mut rows = String::new();
         for f in &files {
-            let name = f.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            let name = f
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
             rows.push_str(&format!(
                 "<tr><td class=n>{}</td><td class=u>{}</td></tr>",
                 name,
@@ -1463,7 +1475,10 @@ impl App {
                                 let mut bm = a.bookmarks.borrow_mut();
                                 bm.clear();
                                 for b in merged {
-                                    bm.push(Bookmark { title: b.title, url: b.url });
+                                    bm.push(Bookmark {
+                                        title: b.title,
+                                        url: b.url,
+                                    });
                                 }
                                 let _ = rc_core::store::save_bookmarks(
                                     &bm.iter()
@@ -1548,7 +1563,10 @@ impl App {
                     .iter()
                     .map(|t| (t.title.borrow().clone(), t.uri.borrow().clone()))
                     .collect();
-                for idx in rc_core::features::match_tabs(query, &pairs).into_iter().take(12) {
+                for idx in rc_core::features::match_tabs(query, &pairs)
+                    .into_iter()
+                    .take(12)
+                {
                     let (title, uri) = pairs[idx].clone();
                     let label = if title.is_empty() { uri.clone() } else { title };
                     let btn = Button::with_label(&format!("{label}  —  {uri}"));
@@ -1620,7 +1638,10 @@ impl App {
             Some("Install userscript"),
             Some(&self.window),
             gtk::DialogFlags::MODAL,
-            &[("Cancel", gtk::ResponseType::Cancel), ("Install", gtk::ResponseType::Ok)],
+            &[
+                ("Cancel", gtk::ResponseType::Cancel),
+                ("Install", gtk::ResponseType::Ok),
+            ],
         );
         let area = dlg.content_area();
         let entry = Entry::new();
@@ -1633,8 +1654,19 @@ impl App {
             if resp == gtk::ResponseType::Ok {
                 let url = entry.text().to_string();
                 if url.starts_with("http") {
-                    let name = url.rsplit('/').next().unwrap_or("script.js").split('?').next().unwrap_or("script.js").to_string();
-                    let name = if name.ends_with(".js") { name } else { format!("{}.js", name) };
+                    let name = url
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or("script.js")
+                        .split('?')
+                        .next()
+                        .unwrap_or("script.js")
+                        .to_string();
+                    let name = if name.ends_with(".js") {
+                        name
+                    } else {
+                        format!("{}.js", name)
+                    };
                     let dest = ext_dir().join(&name);
                     let ok = std::process::Command::new("curl")
                         .args(["-sSL", "--max-time", "20", "-o"])
@@ -1681,9 +1713,14 @@ impl App {
         }
         set_icon(
             &self.theme_btn,
-            if dark { "weather-clear-symbolic" } else { "weather-clear-night-symbolic" },
+            if dark {
+                "weather-clear-symbolic"
+            } else {
+                "weather-clear-night-symbolic"
+            },
         );
-        self.theme_btn.set_tooltip_text(Some(if dark { "Light mode" } else { "Dark mode" }));
+        self.theme_btn
+            .set_tooltip_text(Some(if dark { "Light mode" } else { "Dark mode" }));
 
         let bg = if dark {
             gtk::gdk::RGBA::new(0.125, 0.129, 0.141, 1.0)
@@ -1704,7 +1741,9 @@ impl App {
     fn install_extensions(&self) -> Vec<String> {
         let mut names = Vec::new();
         for path in ext_files() {
-            let Ok(code) = std::fs::read_to_string(&path) else { continue };
+            let Ok(code) = std::fs::read_to_string(&path) else {
+                continue;
+            };
             let name = path
                 .file_stem()
                 .map(|s| s.to_string_lossy().to_string())
@@ -1778,20 +1817,27 @@ impl App {
             self.back.set_sensitive(t.view.can_go_back());
             self.forward.set_sensitive(t.view.can_go_forward());
             let loading = t.view.is_loading();
-            set_icon(&self.reload, if loading { "process-stop-symbolic" } else { "view-refresh-symbolic" });
-            self.reload.set_tooltip_text(Some(if loading { "Stop loading" } else { "Reload" }));
+            set_icon(
+                &self.reload,
+                if loading {
+                    "process-stop-symbolic"
+                } else {
+                    "view-refresh-symbolic"
+                },
+            );
+            self.reload
+                .set_tooltip_text(Some(if loading { "Stop loading" } else { "Reload" }));
             if let Some(img) = self.reload.image() {
                 if let Ok(img) = img.downcast::<Image>() {
                     img.set_pixel_size(((16.0 * self.ui_zoom.get()).round() as i32).clamp(10, 96));
                 }
             }
-            self.entry.set_primary_icon_name(Some(
-                if t.uri.borrow().starts_with("https://") {
+            self.entry
+                .set_primary_icon_name(Some(if t.uri.borrow().starts_with("https://") {
                     "channel-secure-symbolic"
                 } else {
                     "system-search-symbolic"
-                },
-            ));
+                }));
         }
     }
 
@@ -1799,8 +1845,19 @@ impl App {
         if let Some(t) = self.current_tab() {
             let url = t.uri.borrow().clone();
             let marked = !url.is_empty() && self.bookmarks.borrow().iter().any(|b| b.url == url);
-            set_icon(&self.star, if marked { "starred-symbolic" } else { "non-starred-symbolic" });
-            self.star.set_tooltip_text(Some(if marked { "Remove bookmark" } else { "Bookmark this tab" }));
+            set_icon(
+                &self.star,
+                if marked {
+                    "starred-symbolic"
+                } else {
+                    "non-starred-symbolic"
+                },
+            );
+            self.star.set_tooltip_text(Some(if marked {
+                "Remove bookmark"
+            } else {
+                "Bookmark this tab"
+            }));
         }
     }
 
@@ -1812,7 +1869,11 @@ impl App {
         }
         let title = {
             let ti = t.title.borrow().clone();
-            if ti.is_empty() { url.clone() } else { ti }
+            if ti.is_empty() {
+                url.clone()
+            } else {
+                ti
+            }
         };
         {
             let mut bm = self.bookmarks.borrow_mut();
@@ -1843,7 +1904,9 @@ impl App {
             btn.set_tooltip_text(Some(&b.url));
             let row = GtkBox::new(Orientation::Horizontal, 6);
             let icon = Image::from_icon_name(Some("folder-symbolic"), gtk::IconSize::Menu);
-            icon.set_pixel_size(((14.0 * self.ui_zoom.get().max(1.0)).round() as i32).clamp(10, 40));
+            icon.set_pixel_size(
+                ((14.0 * self.ui_zoom.get().max(1.0)).round() as i32).clamp(10, 40),
+            );
             row.pack_start(&icon, false, false, 0);
             row.pack_start(&Label::new(Some(&b.title)), false, false, 0);
             btn.add(&row);
@@ -1934,7 +1997,10 @@ impl App {
     }
 
     fn zoom_by(&self, delta: f64) {
-        let base = self.current_tab().map(|t| t.zoom.get()).unwrap_or(self.zoom.get());
+        let base = self
+            .current_tab()
+            .map(|t| t.zoom.get())
+            .unwrap_or(self.zoom.get());
         self.set_zoom(base + delta);
     }
 
@@ -1965,8 +2031,8 @@ impl App {
         if let Err(e) = provider.load_from_data(css.as_bytes()) {
             eprintln!("css error: {e}");
         }
-        if let Some(screen) = gtk::prelude::WidgetExt::screen(&self.window)
-            .or_else(gtk::gdk::Screen::default)
+        if let Some(screen) =
+            gtk::prelude::WidgetExt::screen(&self.window).or_else(gtk::gdk::Screen::default)
         {
             // drop the previous zoomed provider so they cannot pile up
             {
@@ -1996,7 +2062,9 @@ impl App {
     }
 
     fn setup_downloads(&self) {
-        let Some(ctx) = WebContext::default() else { return };
+        let Some(ctx) = WebContext::default() else {
+            return;
+        };
         ctx.set_cache_model(if std::env::var("RUSTCHROME_LEAN").is_ok() {
             webkit2gtk::CacheModel::DocumentViewer
         } else {
@@ -2018,8 +2086,14 @@ impl App {
             let mut n = 1;
             while dest.exists() {
                 let p = PathBuf::from(&name);
-                let stem = p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "file".into());
-                let ext = p.extension().map(|s| format!(".{}", s.to_string_lossy())).unwrap_or_default();
+                let stem = p
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "file".into());
+                let ext = p
+                    .extension()
+                    .map(|s| format!(".{}", s.to_string_lossy()))
+                    .unwrap_or_default();
                 dest = downloads.join(format!("{} ({}){}", stem, n, ext));
                 n += 1;
             }
@@ -2051,7 +2125,9 @@ impl App {
         let mi_new = add("New tab");
         {
             let a = self.rc();
-            mi_new.connect_activate(move |_| { a.new_tab(NEW_TAB_PAGE); });
+            mi_new.connect_activate(move |_| {
+                a.new_tab(NEW_TAB_PAGE);
+            });
         }
         let mi_reopen = add("Reopen closed tab");
         {
@@ -2137,7 +2213,11 @@ impl App {
             let a = self.rc();
             mi_closed.connect_activate(move |_| a.recently_closed_dialog());
         }
-        let mi_strict = add(if self.strict.get() { "Strict mode: on" } else { "Strict mode: off" });
+        let mi_strict = add(if self.strict.get() {
+            "Strict mode: on"
+        } else {
+            "Strict mode: off"
+        });
         {
             let a = self.rc();
             mi_strict.connect_activate(move |_| {
@@ -2161,7 +2241,11 @@ impl App {
             let now = !get_pref("autoclear").unwrap_or(true);
             set_pref("autoclear", now);
         });
-        let mi_fp = add(if self.antifp.get() { "Anti-fingerprinting: on" } else { "Anti-fingerprinting: off" });
+        let mi_fp = add(if self.antifp.get() {
+            "Anti-fingerprinting: on"
+        } else {
+            "Anti-fingerprinting: off"
+        });
         {
             let a = self.rc();
             mi_fp.connect_activate(move |_| {
@@ -2171,7 +2255,11 @@ impl App {
                 a.apply_fingerprint_mode();
             });
         }
-        let mi_force = add(if self.force_dark.get() { "Force dark pages: on" } else { "Force dark pages: off" });
+        let mi_force = add(if self.force_dark.get() {
+            "Force dark pages: on"
+        } else {
+            "Force dark pages: off"
+        });
         {
             let a = self.rc();
             mi_force.connect_activate(move |_| {
@@ -2182,7 +2270,11 @@ impl App {
                 a.apply_theme(d, false);
             });
         }
-        let mi_theme = add(if self.dark.get() { "Light mode" } else { "Dark mode" });
+        let mi_theme = add(if self.dark.get() {
+            "Light mode"
+        } else {
+            "Dark mode"
+        });
         {
             let a = self.rc();
             mi_theme.connect_activate(move |_| {
@@ -2228,14 +2320,19 @@ impl App {
     }
 }
 
-
 /// Wipes cookies, caches, localStorage, IndexedDB, sessions — everything a
 /// session leaves behind — then runs `then` on the GTK main loop.
 fn clear_session_data(then: impl FnOnce() + 'static) {
     use gtk::glib::object::ObjectType;
-    let Some(ctx) = WebContext::default() else { then(); return };
+    let Some(ctx) = WebContext::default() else {
+        then();
+        return;
+    };
     ctx.clear_cache();
-    let Some(dm) = ctx.website_data_manager() else { then(); return };
+    let Some(dm) = ctx.website_data_manager() else {
+        then();
+        return;
+    };
 
     let boxed: Box<Box<dyn FnOnce()>> = Box::new(Box::new(then));
     unsafe {
@@ -2294,12 +2391,17 @@ fn save_bookmarks(bm: &[Bookmark]) {
 }
 
 fn main() {
+    let _ = START.set(std::time::Instant::now());
     {
         let path = data_dir().join("crash.log");
         std::panic::set_hook(Box::new(move |info| {
             let msg = format!("[panic] {}\n", info);
             eprintln!("{msg}");
-            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+            {
                 use std::io::Write;
                 let _ = f.write_all(msg.as_bytes());
             }
