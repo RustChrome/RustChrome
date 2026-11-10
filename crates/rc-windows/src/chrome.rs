@@ -51,7 +51,39 @@ impl Msg {
     }
 }
 
+/// Load the chrome into its webview.
+///
+/// `NavigateToString` was used here and it never worked: the navigation started
+/// and never committed, so the UI webview held no document — a window with no
+/// tabs, no toolbar and no address bar, while every WebView2 call returned
+/// success and the built-in error page was disabled so nothing was shown. A
+/// virtual host serving the same HTML from a real file is the reliable path for
+/// a document this size.
 pub fn load(webview: &ICoreWebView2) {
+    let dir = rc_core::data_dir().join("ui");
+    let written = std::fs::create_dir_all(&dir).is_ok()
+        && std::fs::write(dir.join("chrome.html"), HTML).is_ok();
+
+    if written {
+        if let Ok(w3) = webview.cast::<ICoreWebView2_3>() {
+            unsafe {
+                let ok = w3
+                    .SetVirtualHostNameToFolderMapping(
+                        &HSTRING::from("rustchrome.internal"),
+                        &HSTRING::from(dir.to_string_lossy().as_ref()),
+                        COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_DENY_CORS,
+                    )
+                    .is_ok();
+                if ok {
+                    let _ = webview.Navigate(&HSTRING::from(
+                        "https://rustchrome.internal/chrome.html",
+                    ));
+                    return;
+                }
+            }
+        }
+    }
+
     unsafe {
         let _ = webview.NavigateToString(&HSTRING::from(HTML));
     }
