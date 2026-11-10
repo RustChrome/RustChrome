@@ -553,27 +553,27 @@ impl App {
         self.push_state();
     }
 
-    /// Run the shared probe in the current page and write its JSON report.
+    /// The probe page publishes its report as the document title, so this needs
+    /// no script evaluation and behaves identically on both shells.
     fn run_probe(&mut self) {
         let Some(path) = self.probe.clone() else { return };
         let Some(wv) = self.tabs.first().and_then(|t| t.webview.clone()) else { return };
+        let mut p = PWSTR::null();
+        let title = unsafe {
+            if wv.DocumentTitle(&mut p).is_ok() {
+                webview::take(p)
+            } else {
+                String::new()
+            }
+        };
+        // The first completion is the blank page a controller starts on.
+        if !title.starts_with('{') && !title.starts_with("FAIL") {
+            return;
+        }
+        let _ = std::fs::write(&path, title);
+        self.closing = true;
         unsafe {
-            let h = ExecuteScriptCompletedHandler::create(Box::new(move |hr, result: String| {
-                let text = match hr {
-                    Ok(()) => match serde_json::from_str::<Value>(&result) {
-                        Ok(Value::String(s)) => s,
-                        _ => result.clone(),
-                    },
-                    Err(e) => format!("FAIL execute: {e}"),
-                };
-                let _ = std::fs::write(&path, text);
-                with_app(|a| {
-                    a.closing = true;
-                    let _ = DestroyWindow(a.hwnd);
-                });
-                Ok(())
-            }));
-            let _ = wv.ExecuteScript(&HSTRING::from(rc_core::privacy::PROBE_JS), &h);
+            let _ = DestroyWindow(self.hwnd);
         }
     }
 

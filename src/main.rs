@@ -98,10 +98,12 @@ fn probe_path() -> Option<PathBuf> {
 }
 
 fn finish_probe(view: &WebView, path: &PathBuf) {
-    let text = view
-        .title()
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| "FAIL no title".to_string());
+    let text = view.title().map(|s| s.to_string()).unwrap_or_default();
+    // The first Finished event is the about:blank we started from; the report
+    // only arrives once the probe page has run, and it starts with "{".
+    if !text.starts_with('{') && !text.starts_with("FAIL") {
+        return;
+    }
     let _ = std::fs::write(path, text);
     std::process::exit(0);
 }

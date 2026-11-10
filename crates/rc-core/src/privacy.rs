@@ -268,7 +268,7 @@ code{background:#f1f3f4;padding:2px 5px;border-radius:4px}</style></head><body>
 <pre id="out"></pre>
 <script>
 window.__probe = function () {
-  const s = (__PROBE__)();
+  const s = __PROBE__;
   document.getElementById('out').textContent = s;
   return s;
 };
