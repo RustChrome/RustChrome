@@ -13,10 +13,16 @@ SRC="$(cd "$(dirname "$0")/.." && pwd)/docs/wiki"
 
 [ -d "$SRC" ] || { echo "no docs/wiki directory"; exit 1; }
 
-WORK="$(mktemp -d)"
+# git here is a native Windows build and cannot resolve MSYS /tmp paths, so the
+# working copy lives next to the repository instead of in a system temp dir.
+WORK="$(cd "$(dirname "$0")/.." && pwd)/.wiki-work"
+rm -rf "$WORK"
+mkdir -p "$WORK"
+# Native git needs a Windows path; bash needs the MSYS one.
+WORK_WIN="$(cygpath -w "$WORK" 2>/dev/null || echo "$WORK")"
 trap 'rm -rf "$WORK"' EXIT
 
-if ! git clone --quiet "https://github.com/${REPO}.wiki.git" "$WORK/wiki" 2>/dev/null; then
+if ! git clone --quiet "https://github.com/${REPO}.wiki.git" "$WORK_WIN/wiki" 2>/dev/null; then
   cat <<EOF
 The wiki repository does not exist yet.
 
