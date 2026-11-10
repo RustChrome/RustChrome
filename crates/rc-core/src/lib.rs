@@ -57,11 +57,20 @@ pub fn normalize(input: &str, engine: &str) -> String {
         return String::new();
     }
     let lower = t.to_ascii_lowercase();
-    for scheme in ["https://", "http://", "file://", "about:", "data:text/html"] {
+    for scheme in ["https://", "http://", "file://", "about:"] {
         if lower.starts_with(scheme) {
             return t.to_string();
         }
     }
+    // Host first: "localhost:8080" and "example.com:8080" look like schemes.
+    let looks_like_host = !t.contains(' ')
+        && !t.starts_with('-')
+        && (t.contains('.') || lower == "localhost" || lower.starts_with("localhost:"));
+    if looks_like_host {
+        return format!("https://{}", t);
+    }
+    // Anything else that still carries a scheme is searched for, not executed:
+    // this is what stops javascript:, ms-settings:, data: and friends.
     if let Some(idx) = t.find(':') {
         let (head, _) = t.split_at(idx);
         let looks_like_scheme = !head.is_empty()
@@ -73,14 +82,7 @@ pub fn normalize(input: &str, engine: &str) -> String {
             return search_url(engine, t);
         }
     }
-    let looks_like_host = !t.contains(' ')
-        && !t.starts_with('-')
-        && (t.contains('.') || lower == "localhost" || lower.starts_with("localhost:"));
-    if looks_like_host {
-        format!("https://{}", t)
-    } else {
-        search_url(engine, t)
-    }
+    search_url(engine, t)
 }
 
 /// Scheme allow-list for everything a page or the shell can navigate to.
@@ -90,7 +92,6 @@ pub fn is_allowed_navigation(url: &str) -> bool {
         || l.starts_with("http://")
         || l.starts_with("file://")
         || l.starts_with("about:")
-        || l.starts_with("data:text/html")
         || l.starts_with("blob:")
 }
 
@@ -173,6 +174,12 @@ mod tests {
     #[test]
     fn empty_input_is_empty() {
         assert!(normalize("   ", "ddg").is_empty());
+    }
+
+    #[test]
+    fn localhost_with_port_stays_a_host() {
+        assert_eq!(normalize("localhost:8080", "ddg"), "https://localhost:8080");
+        assert_eq!(normalize("example.com:8443/x", "ddg"), "https://example.com:8443/x");
     }
 
     #[test]
