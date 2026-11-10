@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Beta feedback and questions
+    url: https://github.com/RustChrome/RustChrome/discussions
+    about: Use Discussions for "does this work for anyone else", setup help and general feedback.
+  - name: Known bugs and untested areas
+    url: https://github.com/RustChrome/RustChrome/blob/main/docs/QA.md
+    about: Read this before reporting — it lists every bug we already know about.
+  - name: Privacy — what it does and does not do
+    url: https://github.com/RustChrome/RustChrome/blob/main/docs/PRIVACY.md
+    about: The honest version, including what is not protected.

@@ -99,6 +99,8 @@ pub struct App {
     pub find_last: String,
     pub closing: bool,
     pub smoke: bool,
+    /// Messages received from the HTML chrome. Zero means it never loaded.
+    ui_msgs: u64,
     pub runtime: String,
     /// Canvas-noise key for this session; rotated by New identity.
     pub seed: SessionSeed,
@@ -145,6 +147,7 @@ impl App {
             find_last: String::new(),
             closing: false,
             smoke,
+            ui_msgs: 0,
             runtime,
             seed: SessionSeed::new(),
             ua,
@@ -271,7 +274,14 @@ impl App {
                     } else {
                         String::new()
                     };
-                    if !uri.is_empty() {
+                    // Our own bootstrap page arrives as about:blank or a
+                    // data: URL depending on the WebView2 version. Cancelling
+                    // those left the chrome webview blank and the browser with
+                    // no tabs and no address bar.
+                    let ours = uri.is_empty()
+                        || uri == "about:blank"
+                        || uri.starts_with("data:text/html");
+                    if !ours {
                         let _ = args.SetCancel(true);
                     }
                 }
@@ -966,7 +976,9 @@ impl App {
             }
         }
         if self.smoke && id == self.tabs.first().map(|t| t.id).unwrap_or(0) && (ok || !canceled) {
-            self.finish_smoke(ok, status);
+            // If the HTML chrome never talked to us, the window has no controls
+            // even though every WebView2 call succeeded. Fail the smoke test.
+            self.finish_smoke(ok && self.ui_msgs > 0, status);
         }
         if self.compat.is_some() && !canceled && id == self.tabs.first().map(|t| t.id).unwrap_or(0)
         {
@@ -1626,6 +1638,7 @@ impl App {
         let Ok(msg) = serde_json::from_str::<chrome::Msg>(raw) else {
             return;
         };
+        self.ui_msgs += 1;
         match msg.cmd.as_str() {
             "navigate" => {
                 if let Some(text) = msg.text {
