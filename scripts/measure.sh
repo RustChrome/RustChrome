@@ -29,7 +29,6 @@ if [ -z "${PID:-}" ]; then
   exit 1
 fi
 echo "pid: $PID" >>"$OUT"
-echo "processes: $PROCS -> $PROCS2" >>"$OUT"
 
 # Every descendant, so WebKitGTK's web and network processes are counted.
 # Measuring only the parent would understate the browser by roughly ten times.
@@ -71,6 +70,7 @@ DELTA_TICKS=$((T2 - T1))
 # 100 ticks per second on Linux; one core's worth is 100*5 ticks over 5s.
 CPU_PCT=$((DELTA_TICKS / 5))
 
+echo "processes: $PROCS -> $PROCS2" >>"$OUT"
 echo "rss_kb_after_8s: $RSS1" >>"$OUT"
 echo "rss_kb_after_13s: $RSS2" >>"$OUT"
 echo "idle_window_s: 5" >>"$OUT"

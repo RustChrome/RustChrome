@@ -56,16 +56,23 @@ yours: pages render with WebKit, everything else is written here in Rust.
 Most browsers sell you privacy as a settings page. Here it's the state the browser
 boots into.
 
-**Tor‑style anti‑fingerprinting.** Every session presents the same generic machine:
-a fixed Firefox/Windows user agent, 1280×800 screen, 1× pixel ratio, 2 cores, 4 GB RAM,
-English-only, UTC clock, zero plugins, canvas reads salted with deterministic noise,
-WebGL off and its renderer masked, WebRTC and media devices closed, every permission
-prompt denied. Sites see "a browser", not "you".
+**One generic machine, every session.** A fixed 1280×800 screen, 1× pixel ratio,
+2 cores, 4 GB RAM, English-only, UTC clock, zero plugins, canvas reads salted with
+per‑session noise (stable while the session lasts, different every launch, so the salt
+cannot be used to recognise you next time), WebGL and WebRTC neutralised in **Strict
+mode**, media devices closed, every permission prompt denied. The user agent matches the
+rendering engine — WebKitGTK identifies as WebKit, WebView2 as Chromium — because a
+browser that lies about its engine is a fingerprint of its own. Sites see "a browser",
+not "you".
 
-**Your session dies with the window.** Closing the browser clears the entire web data
-store first — cookies, localStorage, IndexedDB, service workers, caches, HSTS — and only
-then exits. Need a clean slate mid‑session? **⋮ → New identity** wipes everything and
-hands you a single fresh tab.
+This makes you one of many. It is **not** anonymity: it does not hide your IP address,
+and it is not Tor.
+
+**Private Session by default.** Closing the browser clears the entire web data store
+first — cookies, localStorage, IndexedDB, service workers, caches, HSTS — and only then
+exits. Switch to a Standard Session in Settings if you want to stay signed in. Need a
+clean slate mid‑session? **⋮ → New identity** wipes everything, rotates the canvas salt
+and hands you a single fresh tab.
 
 **No history file. None.** There is no history database to leak, subpoena or sync.
 
