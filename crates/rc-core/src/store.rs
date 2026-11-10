@@ -30,8 +30,13 @@ pub struct Prefs {
     /// Strict mode: WebGL contexts denied and WebRTC removed entirely, at the
     /// cost of breaking some sites. Off = coerce instead of remove.
     pub strict: bool,
-    /// Keep cookies/cache on disk between launches. Off = InPrivate tabs.
+    /// Keep cookies/cache on disk between launches. Off = InPrivate tabs
+    /// (Private Session), on = Standard Session.
     pub keep_session: bool,
+    /// Reopen the tabs from the previous run when it ended in a crash.
+    pub restore_session: bool,
+    /// User-defined search engines, in addition to the built-in list.
+    pub engines: Vec<crate::features::CustomEngine>,
     pub show_bookmarks: bool,
     /// Search engine id from `SEARCH_ENGINES`.
     pub engine: String,
@@ -47,6 +52,8 @@ impl Default for Prefs {
             antifp: true,
             strict: false,
             keep_session: false,
+            restore_session: true,
+            engines: Vec::new(),
             show_bookmarks: true,
             // Same default as the GTK build (HOME + search are Google).
             engine: "google".to_string(),
@@ -81,6 +88,11 @@ impl Prefs {
         write_atomic(&Self::path(), s.as_bytes())
     }
 
+    /// Resolve a search template, honouring custom engines.
+    pub fn template_for(&self, id: &str) -> String {
+        crate::features::resolve_template(id, &self.engines)
+    }
+
     pub fn is_dark(&self) -> bool {
         self.theme == "dark"
     }
@@ -96,6 +108,9 @@ impl Prefs {
             "antifp" => self.antifp = value.as_bool().unwrap_or(self.antifp),
             "strict" => self.strict = value.as_bool().unwrap_or(self.strict),
             "keep_session" => self.keep_session = value.as_bool().unwrap_or(self.keep_session),
+            "restore_session" => {
+                self.restore_session = value.as_bool().unwrap_or(self.restore_session)
+            }
             "show_bookmarks" => {
                 self.show_bookmarks = value.as_bool().unwrap_or(self.show_bookmarks)
             }

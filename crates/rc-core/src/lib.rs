@@ -5,6 +5,7 @@
 //! on-disk stores, the data directory policy and the privacy payloads.
 
 pub mod dashboard;
+pub mod features;
 pub mod privacy;
 pub mod store;
 
