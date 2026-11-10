@@ -95,6 +95,13 @@ pub fn is_allowed_navigation(url: &str) -> bool {
         return true;
     }
     let l = url.to_ascii_lowercase();
+    // Internal pages (new tab, error page) are rendered with
+    // `ICoreWebView2::NavigateToString`, which presents itself as a
+    // `data:text/html` navigation. Chromium already refuses page-initiated
+    // top-level data: navigations, so this only admits our own pages.
+    if l.starts_with("data:text/html") {
+        return true;
+    }
     l.starts_with("https://")
         || l.starts_with("http://")
         || l.starts_with("file://")
@@ -193,6 +200,9 @@ mod tests {
     fn internal_pages_with_no_uri_are_allowed() {
         assert!(is_allowed_navigation(""));
         assert!(is_allowed_navigation("about:blank"));
+        // NavigateToString lands here; blocking it would break every
+        // internal page.
+        assert!(is_allowed_navigation("data:text/html;charset=utf-8,<h1>x</h1>"));
     }
 
     #[test]
@@ -201,7 +211,7 @@ mod tests {
         assert!(is_allowed_navigation("about:blank"));
         assert!(!is_allowed_navigation("ms-settings:privacy"));
         assert!(!is_allowed_navigation("javascript:alert(1)"));
-        assert!(!is_allowed_navigation("data:text/html;base64,AAAA")); // narrowed allow-list
+        assert!(!is_allowed_navigation("data:text/plain,hello"));
     }
 
     #[test]

@@ -571,6 +571,7 @@ impl App {
     }
 
     fn on_nav_starting(&mut self, id: u64, uri: String, allowed: bool) {
+        self.trace(&format!("tab {id} nav starting: allowed={allowed} uri={uri:?}"));
         if let Some(t) = self.tabs.iter_mut().find(|t| t.id == id) {
             t.loading = true;
             if allowed && !uri.is_empty() && uri != "about:blank" {
