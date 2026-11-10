@@ -1,6 +1,6 @@
 [package]
 name = "rustchrome-win"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
 description = "RustChrome for Windows — Win32 shell over Microsoft Edge WebView2."

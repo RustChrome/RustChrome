@@ -3,9 +3,20 @@ name: CI
 on:
   push:
     branches:
-      ["main", "feat/windows-foundation", "feat/privacy-hardening", "feat/everyday-features"]
+      [
+        "main",
+        "feat/windows-foundation",
+        "feat/privacy-hardening",
+        "feat/everyday-features",
+        "feat/qa",
+        "feat/beta",
+      ]
   pull_request:
   workflow_dispatch:
+
+env:
+  # Single source of truth for artifact names; keep in step with Cargo.toml.
+  VERSION: "0.2.0"
 
 jobs:
   linux:
@@ -23,6 +34,30 @@ jobs:
         run: cargo build --release
       - name: Binary
         run: ls -l target/release/rustchrome
+
+      - name: Package tarball
+        run: |
+          set -euo pipefail
+          NAME="rustchrome-${VERSION}-x86_64-linux"
+          rm -rf "dist/$NAME"
+          mkdir -p "dist/$NAME/docs"
+          cp target/release/rustchrome "dist/$NAME/"
+          cp README.md LICENSE "dist/$NAME/"
+          cp docs/*.md "dist/$NAME/docs/"
+          tar --sort=name --mtime='2026-01-01 00:00Z' --owner=0 --group=0 --numeric-owner \
+            -C dist -czf "dist/$NAME.tar.gz" "$NAME"
+          ( cd dist && sha256sum "$NAME.tar.gz" > "$NAME.tar.gz.sha256" )
+          cat "dist/$NAME.tar.gz.sha256"
+          ls -l "dist/$NAME.tar.gz"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rustchrome-linux-x64
+          path: |
+            dist/rustchrome-*-x86_64-linux.tar.gz
+            dist/rustchrome-*-x86_64-linux.tar.gz.sha256
+          if-no-files-found: warn
 
       - name: Privacy probe (two fresh sessions)
         run: |
@@ -125,11 +160,12 @@ jobs:
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item target\release\rustchrome.exe dist\
           Copy-Item docs\WINDOWS.md dist\README-WINDOWS.md -ErrorAction SilentlyContinue
-          Compress-Archive -Path dist\* -DestinationPath rustchrome-0.1.0-x86_64-windows.zip -Force
-          Get-FileHash rustchrome-0.1.0-x86_64-windows.zip -Algorithm SHA256 |
-            ForEach-Object { "$($_.Hash)  rustchrome-0.1.0-x86_64-windows.zip" } |
-            Out-File -Encoding ascii rustchrome-0.1.0-x86_64-windows.zip.sha256
-          Get-Item rustchrome-0.1.0-x86_64-windows.zip | Select-Object Name, Length
+          $zip = "rustchrome-$($env:VERSION)-x86_64-windows.zip"
+          Compress-Archive -Path dist\* -DestinationPath $zip -Force
+          Get-FileHash $zip -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLower())  $zip" } |
+            Out-File -Encoding ascii "$zip.sha256"
+          Get-Item $zip | Select-Object Name, Length
 
       - name: Exe details
         shell: powershell
@@ -142,8 +178,8 @@ jobs:
         with:
           name: rustchrome-windows-x64
           path: |
-            rustchrome-0.1.0-x86_64-windows.zip
-            rustchrome-0.1.0-x86_64-windows.zip.sha256
+            rustchrome-*-x86_64-windows.zip
+            rustchrome-*-x86_64-windows.zip.sha256
             smoke.txt
             smoke.txt.log
 
