@@ -28,16 +28,8 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: rustfmt (report, do not block while the tree is unformatted)
-        run: |
-          set +e
-          cargo fmt --all -- --check > fmt-check.txt 2>&1
-          echo "fmt exit: $?"
-          head -40 fmt-check.txt
-          cargo fmt --all
-          git diff > fmt.patch || true
-          wc -l fmt.patch || true
-          git checkout -- . || true
+      - name: rustfmt
+        run: cargo fmt --all -- --check
 
       - name: clippy
         run: cargo clippy --all-targets -- -D warnings
@@ -83,14 +75,8 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: rustfmt (report)
-        shell: powershell
-        run: |
-          cargo fmt --all -- --check 2>&1 | Tee-Object -FilePath fmt-check.txt | Select-Object -First 40
-          cargo fmt --all
-          git diff > fmt.patch
-          (Get-Content fmt.patch | Measure-Object -Line).Lines
-          git checkout -- .
+      - name: rustfmt
+        run: cargo fmt --all -- --check
 
       - name: clippy
         run: cargo clippy -p rc-core -p rustchrome-win --all-targets -- -D warnings

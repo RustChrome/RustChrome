@@ -29,18 +29,43 @@ if [ -z "${PID:-}" ]; then
   exit 1
 fi
 echo "pid: $PID" >>"$OUT"
+echo "processes: $PROCS -> $PROCS2" >>"$OUT"
 
-rss() { awk '/VmRSS/{print $2}' "/proc/$1/status" 2>/dev/null || echo 0; }
-cpu_ticks() { awk '{print $14+$15}' "/proc/$1/stat" 2>/dev/null || echo 0; }
+# Every descendant, so WebKitGTK's web and network processes are counted.
+# Measuring only the parent would understate the browser by roughly ten times.
+tree() {
+  echo "$1"
+  local c
+  for c in $(pgrep -P "$1" 2>/dev/null); do tree "$c"; done
+}
+
+rss_tree() {
+  local total=0 pid kb
+  for pid in $(tree "$1"); do
+    kb=$(awk '/VmRSS/{print $2}' "/proc/$pid/status" 2>/dev/null || echo 0)
+    total=$((total + ${kb:-0}))
+  done
+  echo "$total"
+}
+
+cpu_tree() {
+  local total=0 pid
+  for pid in $(tree "$1"); do
+    total=$((total + $(awk '{print $14+$15}' "/proc/$pid/stat" 2>/dev/null || echo 0)))
+  done
+  echo "$total"
+}
 
 sleep 5
-RSS1=$(rss "$PID")
-T1=$(cpu_ticks "$PID")
+PROCS=$(tree "$PID" | wc -l)
+RSS1=$(rss_tree "$PID")
+T1=$(cpu_tree "$PID")
 
 # Idle window: no navigation, no interaction.
 sleep 5
-RSS2=$(rss "$PID")
-T2=$(cpu_ticks "$PID")
+RSS2=$(rss_tree "$PID")
+T2=$(cpu_tree "$PID")
+PROCS2=$(tree "$PID" | wc -l)
 
 DELTA_TICKS=$((T2 - T1))
 # 100 ticks per second on Linux; one core's worth is 100*5 ticks over 5s.
