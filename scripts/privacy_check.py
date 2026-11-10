@@ -101,7 +101,11 @@ def main(argv):
         str(a["webrtc"]),
     )
     if a["webrtc"] == "undefined":
-        skip("WebRTC relay-only", "API removed (strict mode)")
+        skip(
+            "WebRTC relay-only",
+            "RTCPeerConnection is not exposed on an opaque origin (WebKit treats "
+            "data: as an insecure context); availability not measured here",
+        )
     else:
         skip("WebRTC relay-only", "candidate policy is engine-level; not observable from script")
 
