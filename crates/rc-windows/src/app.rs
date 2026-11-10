@@ -116,6 +116,7 @@ impl App {
     /// Kick off the UI webview and the first tab.
     pub fn boot(&mut self) {
         self.trace(&format!("boot: hwnd={:?} runtime={}", self.hwnd.0, self.runtime));
+        window::apply_frame_theme(self.hwnd, self.prefs.is_dark());
         let env = self.env.clone();
         let hwnd = self.hwnd;
         let in_private = !self.prefs.keep_session;
@@ -230,6 +231,7 @@ impl App {
             height_css: if self.prefs.show_bookmarks { 118.0 } else { 88.0 },
         });
         chrome::load(&created.webview);
+        window::apply_frame_theme(self.hwnd, self.prefs.is_dark());
         self.relayout();
         self.push_state();
     }
@@ -499,6 +501,31 @@ impl App {
     }
 
     // ------------------------------------------------------------- navigation
+
+    /// Render one of the internal pages the GTK build also has
+    /// (about:rustchrome-bookmarks / -extensions).
+    fn open_internal_page(&mut self, which: &str) {
+        let Some(wv) = self.tabs.get(self.active).and_then(|t| t.webview.clone()) else {
+            return;
+        };
+        let html = match which {
+            "bookmarks" => pages::bookmarks_html(&self.bookmarks),
+            "extensions" => pages::extensions_html(
+                &store::userscript_files(),
+                &store::userscript_dir().to_string_lossy(),
+            ),
+            _ => return,
+        };
+        let idx = self.active;
+        self.tabs[idx].is_new_tab = true;
+        self.tabs[idx].url.clear();
+        self.tabs[idx].wants = Some(String::new());
+        self.tabs[idx].title = if which == "bookmarks" { "Bookmarks" } else { "Extensions" }.to_string();
+        unsafe {
+            let _ = wv.NavigateToString(&HSTRING::from(html));
+        }
+        self.push_state();
+    }
 
     fn show_new_tab(&mut self, idx: usize) {
         let Some(wv) = self.tabs.get(idx).and_then(|t| t.webview.clone()) else {
@@ -906,6 +933,9 @@ impl App {
     fn apply_pref_side_effects(&mut self, key: &str) {
         match key {
             "theme" | "force_dark" | "antifp" => {
+                if key == "theme" {
+                    window::apply_frame_theme(self.hwnd, self.prefs.is_dark());
+                }
                 for idx in 0..self.tabs.len() {
                     if key == "antifp" {
                         if let Some(wv) = self.tabs[idx].webview.clone() {
@@ -1008,8 +1038,15 @@ impl App {
             .map(|e| json!({ "id": e.0, "label": e.1 }))
             .collect();
 
+        let engine_label = rc_core::SEARCH_ENGINES
+            .iter()
+            .find(|e| e.0 == self.prefs.engine)
+            .map(|e| e.1)
+            .unwrap_or("Google");
+
         json!({
             "tabs": tabs,
+            "engine_label": engine_label,
             "url": url,
             "can_back": can_back,
             "can_forward": can_forward,
@@ -1117,6 +1154,19 @@ impl App {
             }
             "opendownloads" => downloads::open_dir(&downloads::downloads_dir()),
             "openuserscripts" => downloads::open_dir(&store::userscript_dir()),
+            "openfolder" => {
+                let which = msg.which.unwrap_or_default();
+                let dir = if which == "userscripts" {
+                    store::userscript_dir()
+                } else {
+                    downloads::downloads_dir()
+                };
+                downloads::open_dir(&dir);
+            }
+            "page" => {
+                let which = msg.which.unwrap_or_default();
+                self.open_internal_page(&which);
+            }
             "reloaduserscripts" => {
                 for idx in 0..self.tabs.len() {
                     self.reinstall_scripts(idx);

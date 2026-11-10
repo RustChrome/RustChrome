@@ -30,6 +30,8 @@ pub struct Msg {
     pub height: Option<f64>,
     #[serde(default)]
     pub back: Option<bool>,
+    #[serde(default)]
+    pub which: Option<String>,
 }
 
 pub fn load(webview: &ICoreWebView2) {

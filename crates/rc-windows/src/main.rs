@@ -62,7 +62,7 @@ fn run(smoke: bool) -> Result<(), String> {
 
     let hinst = window::instance();
     window::register(hinst).map_err(|e| format!("could not register the window class: {e}"))?;
-    let hwnd = window::create(hinst, "RustChrome", 1280, 820)
+    let hwnd = window::create(hinst, "RustChrome", 1280, 800)
         .map_err(|e| format!("could not create the window: {e}"))?;
 
     let env = webview::create_environment()?;

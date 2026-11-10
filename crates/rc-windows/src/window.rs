@@ -105,5 +105,31 @@ pub fn message_box(hwnd: HWND, text: &str, caption: &str) {
     }
 }
 
+/// Blend the native title bar into the browser chrome where the OS allows it:
+/// Win11 honours an exact caption colour, Win10 1809+ at least honours the
+/// dark-mode flag. Unsupported attributes simply fail and are ignored.
+pub fn apply_frame_theme(hwnd: HWND, dark: bool) {
+    use windows::Win32::Graphics::Dwm::{
+        DwmSetWindowAttribute, DWMWA_CAPTION_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE,
+    };
+    unsafe {
+        let flag = windows::core::BOOL(if dark { 1 } else { 0 });
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_USE_IMMERSIVE_DARK_MODE,
+            &flag as *const _ as *const core::ffi::c_void,
+            std::mem::size_of::<windows::core::BOOL>() as u32,
+        );
+        // COLORREF is 0x00BBGGRR: #dee1e6 (headerbar light) / #202124 (dark).
+        let colour: u32 = if dark { 0x0024_2120 } else { 0x00E6_E1DE };
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_CAPTION_COLOR,
+            &colour as *const _ as *const core::ffi::c_void,
+            4,
+        );
+    }
+}
+
 /// `GetDpiForWindow` lives in the HiDpi module but is used everywhere here.
 use windows::Win32::UI::HiDpi::GetDpiForWindow;

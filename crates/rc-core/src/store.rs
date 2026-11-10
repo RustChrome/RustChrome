@@ -44,7 +44,8 @@ impl Default for Prefs {
             antifp: true,
             keep_session: false,
             show_bookmarks: true,
-            engine: SEARCH_ENGINES[0].0.to_string(),
+            // Same default as the GTK build (HOME + search are Google).
+            engine: "google".to_string(),
             find_case: false,
             zoom: 1.0,
         }
@@ -144,6 +145,20 @@ pub fn userscript_dir() -> PathBuf {
     let d = data_dir().join("userscripts");
     let _ = std::fs::create_dir_all(&d);
     d
+}
+
+/// Paths of every installed userscript, sorted.
+pub fn userscript_files() -> Vec<PathBuf> {
+    let Ok(rd) = std::fs::read_dir(userscript_dir()) else {
+        return Vec::new();
+    };
+    let mut paths: Vec<PathBuf> = rd
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().map(|x| x == "js").unwrap_or(false))
+        .collect();
+    paths.sort();
+    paths
 }
 
 /// Read every `.js` file in the userscript folder, sorted by name for a stable
