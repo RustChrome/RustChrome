@@ -60,6 +60,7 @@ jobs:
           $p = Start-Process -FilePath ".\target\release\rustchrome.exe" -ArgumentList "--smoke-test" -PassThru -Wait
           Write-Output "exit code: $($p.ExitCode)"
           if (Test-Path smoke.txt) { Write-Output "smoke.txt: $(Get-Content smoke.txt -Raw)" } else { Write-Output "no smoke output" }
+          if (Test-Path smoke.txt.log) { Write-Output "--- trace ---"; Get-Content smoke.txt.log }
           if ($p.ExitCode -ne 0) { Write-Host "::error::browser exited with $($p.ExitCode)"; exit 1 }
           if (-not (Test-Path smoke.txt)) { Write-Host "::error::no smoke result file"; exit 1 }
           if (-not (Select-String -Path smoke.txt -Pattern '^OK')) { Write-Host "::error::navigation did not complete"; exit 1 }
@@ -90,6 +91,7 @@ jobs:
             rustchrome-0.1.0-x86_64-windows.zip
             rustchrome-0.1.0-x86_64-windows.zip.sha256
             smoke.txt
+            smoke.txt.log
 
       - name: Lock file produced by this build
         uses: actions/upload-artifact@v4

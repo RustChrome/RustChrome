@@ -111,6 +111,7 @@ impl App {
 
     /// Kick off the UI webview and the first tab.
     pub fn boot(&mut self) {
+        self.trace(&format!("boot: hwnd={:?} runtime={}", self.hwnd.0, self.runtime));
         let env = self.env.clone();
         let hwnd = self.hwnd;
         let in_private = !self.prefs.keep_session;
@@ -124,7 +125,33 @@ impl App {
         self.new_tab(None, true);
     }
 
+    /// In `--smoke-test` mode write progress to a log next to the result file
+    /// instead of showing dialogs, which would block a headless CI session.
+    pub fn trace(&self, msg: &str) {
+        if !self.smoke {
+            return;
+        }
+        let path = std::env::var("RUSTCHROME_SMOKE_OUT").unwrap_or_else(|_| "smoke.txt".into());
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(format!("{path}.log"))
+        {
+            let _ = writeln!(f, "{msg}");
+        }
+    }
+
     fn fatal(&self, msg: &str) {
+        self.trace(&format!("fatal: {msg}"));
+        if self.smoke {
+            let out = std::env::var("RUSTCHROME_SMOKE_OUT").unwrap_or_else(|_| "smoke.txt".into());
+            let _ = std::fs::write(out, format!("FAIL fatal: {msg}\n"));
+            unsafe {
+                let _ = DestroyWindow(self.hwnd);
+            }
+            return;
+        }
         let text = format!(
             "RustChrome could not start its browser engine.\n\n{msg}\n\n\
              Install or repair the Microsoft Edge WebView2 Runtime, then start RustChrome again:\n\
@@ -139,6 +166,7 @@ impl App {
     // ------------------------------------------------------------- chrome view
 
     fn on_chrome_ready(&mut self, res: Result<webview::Created, String>) {
+        self.trace(&format!("chrome ready: ok={}", res.is_ok()));
         let created = match res {
             Ok(c) => c,
             Err(e) => {
@@ -162,11 +190,16 @@ impl App {
             }));
             let _ = created.webview.add_WebMessageReceived(&h, &mut token);
 
-            // The UI must never navigate anywhere.
+            // The UI must never navigate anywhere — but NavigateToString (our
+            // own bootstrap page) reports an empty URI and must be allowed.
             let mut token = 0i64;
             let h = NavigationStartingEventHandler::create(Box::new(|_s, args| {
                 if let Some(args) = args {
-                    let _ = args.SetCancel(true);
+                    let mut p = PWSTR::null();
+                    let uri = if args.Uri(&mut p).is_ok() { webview::take(p) } else { String::new() };
+                    if !uri.is_empty() {
+                        let _ = args.SetCancel(true);
+                    }
                 }
                 Ok(())
             }));
@@ -233,13 +266,23 @@ impl App {
     }
 
     fn on_controller(&mut self, id: u64, res: Result<webview::Created, String>) {
+        self.trace(&format!("tab {id} controller: ok={}", res.is_ok()));
         let Some(idx) = self.tabs.iter().position(|t| t.id == id) else {
             return;
         };
         match res {
             Err(e) => {
+                self.trace(&format!("tab {id} failed: {e}"));
                 self.tabs[idx].title = "Tab failed".to_string();
                 self.push_state();
+                if self.smoke {
+                    let out = std::env::var("RUSTCHROME_SMOKE_OUT").unwrap_or_else(|_| "smoke.txt".into());
+                    let _ = std::fs::write(out, format!("FAIL controller: {e}\n"));
+                    unsafe {
+                        let _ = DestroyWindow(self.hwnd);
+                    }
+                    return;
+                }
                 window::message_box(
                     self.hwnd,
                     &format!("A tab could not be created.\n\n{e}"),
@@ -453,6 +496,7 @@ impl App {
     // ------------------------------------------------------------- navigation
 
     fn show_new_tab(&mut self, idx: usize) {
+        self.trace(&format!("tab {idx} show new tab page"));
         let Some(wv) = self.tabs.get(idx).and_then(|t| t.webview.clone()) else {
             return;
         };
@@ -523,6 +567,7 @@ impl App {
     }
 
     fn on_nav_completed(&mut self, id: u64, ok: bool, status: i32) {
+        self.trace(&format!("tab {id} nav completed: ok={ok} status={status}"));
         if let Some(t) = self.tabs.iter_mut().find(|t| t.id == id) {
             t.loading = false;
         }
