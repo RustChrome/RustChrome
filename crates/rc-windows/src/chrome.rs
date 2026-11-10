@@ -3,7 +3,7 @@
 
 use serde::Deserialize;
 use webview2_com::Microsoft::Web::WebView2::Win32::*;
-use windows::core::HSTRING;
+use windows::core::{Interface, HSTRING};
 
 pub const HTML: &str = include_str!("../assets/chrome.html");
 
