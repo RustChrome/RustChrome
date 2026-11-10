@@ -52,6 +52,18 @@ jobs:
       - name: Release build
         run: cargo build --release -p rustchrome-win
 
+      - name: No dynamic CRT imports (portable zip must run anywhere)
+        shell: powershell
+        run: |
+          $ascii = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes("target\release\rustchrome.exe"))
+          $bad = @("VCRUNTIME140.dll", "VCRUNTIME140_1.dll", "MSVCP140.dll", "ucrtbase.dll", "api-ms-win-crt")
+          $found = @($bad | Where-Object { $ascii.Contains($_) })
+          if ($found.Count -gt 0) {
+            Write-Host "::error::executable still imports the dynamic CRT: $($found -join ', ')"
+            exit 1
+          }
+          Write-Output "ok: no dynamic CRT imports"
+
       - name: Smoke test (launch, render, shut down)
         shell: powershell
         run: |
