@@ -1168,7 +1168,7 @@ impl App {
 
         // Attach progress/state reporting.
         unsafe {
-            if let Ok(op) = unsafe { args.DownloadOperation() } {
+            if let Ok(op) = args.DownloadOperation() {
                 self.dl_ops.push((id, op.clone()));
                 let h = webview2_com::BytesReceivedChangedEventHandler::create(Box::new(
                     move |sender, _a| {

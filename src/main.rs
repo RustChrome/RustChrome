@@ -25,70 +25,7 @@ use webkit2gtk::{
 const HOME: &str = "https://www.google.com/";
 const NEW_TAB_PAGE: &str = "about:rustchrome-newtab";
 const EXT_PAGE: &str = "about:rustchrome-extensions";
-const TOR_UA: &str = "Mozilla/5.0 (Windows NT 10.0; rv:128.0) Gecko/20100101 Firefox/128.0";
 
-/// Anti-fingerprinting shim: everything a page can use to recognise the machine
-/// is pinned to one generic profile, the way Tor Browser does it.
-const ANTI_FP_JS: &str = r#"
-(() => {
-  const UA = 'Mozilla/5.0 (Windows NT 10.0; rv:128.0) Gecko/20100101 Firefox/128.0';
-  const W = 1280, H = 800, D = 24;
-  const def = (o, p, v) => { try { Object.defineProperty(o, p, { get: () => v, configurable: true }); } catch (e) {} };
-  if (screen) {
-    def(screen, 'width', W); def(screen, 'height', H);
-    def(screen, 'availWidth', W); def(screen, 'availHeight', H - 40);
-    def(screen, 'colorDepth', D); def(screen, 'pixelDepth', D);
-    def(screen, 'orientation', { angle: 0, type: 'landscape-primary' });
-  }
-  def(window, 'devicePixelRatio', 1);
-  def(window, 'outerWidth', W); def(window, 'outerHeight', H);
-  if (navigator) {
-    def(navigator, 'userAgent', UA);
-    def(navigator, 'appVersion', UA.replace('Mozilla/', ''));
-    def(navigator, 'platform', 'Win32');
-    def(navigator, 'hardwareConcurrency', 2);
-    def(navigator, 'deviceMemory', 4);
-    def(navigator, 'languages', Object.freeze(['en-US', 'en']));
-    def(navigator, 'language', 'en-US');
-    def(navigator, 'plugins', Object.freeze([]));
-    def(navigator, 'mimeTypes', Object.freeze([]));
-    def(navigator, 'doNotTrack', '1');
-    if (navigator.mediaDevices) {
-      navigator.mediaDevices.enumerateDevices = () => Promise.resolve([]);
-      navigator.mediaDevices.getUserMedia = () => Promise.reject(new Error('blocked'));
-    }
-  }
-  // canvas fingerprint noise
-  const pts = (d) => { for (let i = 0; i < d.data.length; i += 997) d.data[i] = (d.data[i] + 1) & 255; };
-  try {
-    const gid = CanvasRenderingContext2D.prototype.getImageData;
-    CanvasRenderingContext2D.prototype.getImageData = function (...a) { const d = gid.apply(this, a); pts(d); return d; };
-    const tdu = HTMLCanvasElement.prototype.toDataURL;
-    HTMLCanvasElement.prototype.toDataURL = function (...a) {
-      try { const c = this.getContext('2d');
-        if (c) { const d = c.getImageData(0, 0, this.width, this.height); pts(d); c.putImageData(d, 0, 0); }
-      } catch (e) {}
-      return tdu.apply(this, a);
-    };
-  } catch (e) {}
-  // WebGL renderer masking
-  try {
-    const gp = WebGLRenderingContext.prototype.getParameter;
-    WebGLRenderingContext.prototype.getParameter = function (p) {
-      if (p === 37445 || p === 37446) return 'Generic Renderer';
-      return gp.apply(this, arguments);
-    };
-  } catch (e) {}
-  // fixed timezone
-  try {
-    Date.prototype.getTimezoneOffset = () => 0;
-    const loc = Intl.DateTimeFormat.prototype.resolvedOptions;
-    Intl.DateTimeFormat.prototype.resolvedOptions = function () {
-      const o = loc.apply(this, arguments); o.timeZone = 'UTC'; return o;
-    };
-  } catch (e) {}
-})();
-"#;
 const BOOKMARKS_PAGE: &str = "about:rustchrome-bookmarks";
 const PRIVACY_PAGE: &str = "about:rustchrome-privacy";
 

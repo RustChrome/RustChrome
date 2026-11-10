@@ -55,7 +55,7 @@ fn clamp_to_work_area(width: i32, height: i32) -> (i32, i32) {
             SPI_GETWORKAREA,
             0,
             Some(&mut r as *mut _ as *mut core::ffi::c_void),
-            0.into(),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
         )
         .is_ok();
         if ok {
