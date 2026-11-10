@@ -1,6 +1,0 @@
-# RustChrome measurement
-date: 2026-11-10T21:46:23Z
-kernel: Linux 6.8.0-1070-azure x86_64
-cpus: 4
-exe: 1342040 bytes
-pid: 13854
