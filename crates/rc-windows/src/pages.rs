@@ -30,7 +30,7 @@ pub fn new_tab_html(engine: &str, dark: bool) -> String {
 
     // Google keeps its wordmark; any other engine gets its name in the same slot.
     let logo = if engine == "google" {
-        wordmark()
+        wordmark().to_string()
     } else {
         format!(r#"<div class="logo">&#8203;{}</div>"#, esc(label))
     };
