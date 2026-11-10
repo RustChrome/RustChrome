@@ -35,7 +35,7 @@ pub static STARTUP: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLoc
 // ---------------------------------------------------------------- global state
 
 thread_local! {
-    static APP: RefCell<Option<Rc<RefCell<App>>>> = RefCell::new(None);
+    static APP: RefCell<Option<Rc<RefCell<App>>>> = const { RefCell::new(None) };
 }
 
 pub fn install(app: Rc<RefCell<App>>) {
@@ -79,7 +79,7 @@ pub struct App {
     pub env: ICoreWebView2Environment,
     pub prefs: Prefs,
     pub chrome: Option<chrome::Chrome>,
-    pub tabs: Vec<Tab>,
+    tabs: Vec<Tab>,
     pub active: usize,
     pub next_id: u64,
     pub session: SessionState,
@@ -865,8 +865,16 @@ impl App {
     }
 
     fn on_title(&mut self, id: u64, title: String) {
+        let mut active_title = None;
         if let Some(t) = self.tabs.iter_mut().find(|t| t.id == id) {
             t.title = title;
+        }
+        if self.tabs.get(self.active).map(|t| t.id) == Some(id) {
+            active_title = self.tabs.get(self.active).map(|t| t.title.clone());
+        }
+        if let Some(title) = active_title {
+            let title = if title.is_empty() { "RustChrome".to_string() } else { format!("{title} - RustChrome") };
+            window::set_title(self.hwnd, &title);
         }
         self.push_state();
     }
