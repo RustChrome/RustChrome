@@ -81,6 +81,8 @@ statistics". The only connections made are the pages you ask for.
 
 ---
 
+![RustChrome on Windows 11](docs/screenshot-windows.png)
+
 ### Install
 
 **Windows 10/11 — portable.** CI builds `rustchrome-0.1.0-x86_64-windows.zip` on
