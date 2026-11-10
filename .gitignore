@@ -4,3 +4,4 @@ dist_qa/
 *.swp/
 dist_qa/
 dist_qa*/
+rel/
