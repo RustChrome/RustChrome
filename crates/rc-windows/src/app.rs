@@ -526,7 +526,11 @@ impl App {
         if let Some(t) = self.tabs.iter_mut().find(|t| t.id == id) {
             t.loading = false;
         }
-        if !ok {
+        // WebView2 cancels the initial about:blank navigation when a controller
+        // is created and we immediately load a page. That is not a failure, and
+        // it must not produce an error page or fail the smoke test.
+        let canceled = status == COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED.0;
+        if !ok && !canceled {
             if let Some(idx) = self.tabs.iter().position(|t| t.id == id) {
                 let url = self.tabs[idx].url.clone();
                 if !url.is_empty() && url != "about:blank" {
@@ -543,7 +547,7 @@ impl App {
                 }
             }
         }
-        if self.smoke && id == self.tabs.first().map(|t| t.id).unwrap_or(0) {
+        if self.smoke && id == self.tabs.first().map(|t| t.id).unwrap_or(0) && (ok || !canceled) {
             self.finish_smoke(ok, status);
         }
         self.push_state();
