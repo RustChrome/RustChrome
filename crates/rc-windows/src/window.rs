@@ -44,7 +44,31 @@ pub fn register(hinst: HINSTANCE) -> Result<()> {
     }
 }
 
+/// Never ask for a window larger than the desktop work area: Windows will
+/// happily create one that is a few pixels wider than the screen, which puts the
+/// client area outside the display on small monitors (and makes the window
+/// un-draggable).
+fn clamp_to_work_area(width: i32, height: i32) -> (i32, i32) {
+    unsafe {
+        let mut r = RECT::default();
+        let ok = SystemParametersInfoW(
+            SPI_GETWORKAREA,
+            0,
+            Some(&mut r as *mut _ as *mut core::ffi::c_void),
+            0.into(),
+        )
+        .is_ok();
+        if ok {
+            let aw = (r.right - r.left).max(640);
+            let ah = (r.bottom - r.top).max(480);
+            return (width.min(aw - 24), height.min(ah - 24));
+        }
+    }
+    (width, height)
+}
+
 pub fn create(hinst: HINSTANCE, title: &str, width: i32, height: i32) -> Result<HWND> {
+    let (width, height) = clamp_to_work_area(width, height);
     let title = HSTRING::from(title);
     unsafe {
         CreateWindowExW(
