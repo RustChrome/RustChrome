@@ -85,6 +85,9 @@ statistics". The only connections made are the pages you ask for.
 
 ### Install
 
+Step-by-step guides, troubleshooting and the known-issues list live in the
+**[wiki](https://github.com/RustChrome/RustChrome/wiki)**.
+
 **Windows 10/11 — portable.** CI builds `rustchrome-0.1.0-x86_64-windows.zip` on
 every push; it is in the run's artifacts, and no public release is published yet.
 Unzip anywhere and run `rustchrome.exe` — nothing is installed and nothing is
