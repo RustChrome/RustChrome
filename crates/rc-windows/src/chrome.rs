@@ -75,9 +75,8 @@ pub fn load(webview: &ICoreWebView2) {
                     )
                     .is_ok();
                 if ok {
-                    let _ = webview.Navigate(&HSTRING::from(
-                        "https://rustchrome.internal/chrome.html",
-                    ));
+                    let _ =
+                        webview.Navigate(&HSTRING::from("https://rustchrome.internal/chrome.html"));
                     return;
                 }
             }

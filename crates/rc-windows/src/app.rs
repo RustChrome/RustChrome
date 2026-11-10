@@ -2062,7 +2062,10 @@ impl App {
                 };
                 self.trace(&format!(
                     "chrome bounds {{0,0,{},{}}} hr={:?} title={:?}",
-                    w, chrome_px, hr.map(|_| 0i32), title
+                    w,
+                    chrome_px,
+                    hr.map(|_| 0i32),
+                    title
                 ));
             }
         }
