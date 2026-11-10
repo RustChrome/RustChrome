@@ -86,7 +86,14 @@ pub fn normalize(input: &str, engine: &str) -> String {
 }
 
 /// Scheme allow-list for everything a page or the shell can navigate to.
+///
+/// The empty string is allowed on purpose: WebView2 reports an empty URI for
+/// its own `NavigateToString` navigations (the new-tab and error pages), and
+/// cancelling those would cancel our own internal pages.
 pub fn is_allowed_navigation(url: &str) -> bool {
+    if url.is_empty() {
+        return true;
+    }
     let l = url.to_ascii_lowercase();
     l.starts_with("https://")
         || l.starts_with("http://")
@@ -180,6 +187,12 @@ mod tests {
     fn localhost_with_port_stays_a_host() {
         assert_eq!(normalize("localhost:8080", "ddg"), "https://localhost:8080");
         assert_eq!(normalize("example.com:8443/x", "ddg"), "https://example.com:8443/x");
+    }
+
+    #[test]
+    fn internal_pages_with_no_uri_are_allowed() {
+        assert!(is_allowed_navigation(""));
+        assert!(is_allowed_navigation("about:blank"));
     }
 
     #[test]

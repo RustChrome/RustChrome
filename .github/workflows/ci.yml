@@ -58,8 +58,8 @@ jobs:
           $env:RUSTCHROME_SMOKE_OUT = "$PWD\smoke.txt"
           Remove-Item smoke.txt -ErrorAction SilentlyContinue
           $p = Start-Process -FilePath ".\target\release\rustchrome.exe" -ArgumentList "--smoke-test" -PassThru -Wait
-          Write-Host "exit code: $($p.ExitCode)"
-          if (Test-Path smoke.txt) { Get-Content smoke.txt } else { Write-Host "no smoke output" }
+          Write-Output "exit code: $($p.ExitCode)"
+          if (Test-Path smoke.txt) { Write-Output "smoke.txt: $(Get-Content smoke.txt -Raw)" } else { Write-Output "no smoke output" }
           if ($p.ExitCode -ne 0) { Write-Host "::error::browser exited with $($p.ExitCode)"; exit 1 }
           if (-not (Test-Path smoke.txt)) { Write-Host "::error::no smoke result file"; exit 1 }
           if (-not (Select-String -Path smoke.txt -Pattern '^OK')) { Write-Host "::error::navigation did not complete"; exit 1 }
@@ -83,6 +83,7 @@ jobs:
           (Get-Item target\release\rustchrome.exe).VersionInfo | Format-List ProductName,FileDescription,FileVersion,LegalCopyright
 
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: rustchrome-windows-x64
           path: |
