@@ -9,7 +9,6 @@ use std::path::{Path, PathBuf};
 use rc_core::store::sanitize_filename;
 use webview2_com::Microsoft::Web::WebView2::Win32::*;
 
-
 #[derive(Clone, Debug)]
 pub struct Item {
     pub id: u64,

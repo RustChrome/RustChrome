@@ -1,0 +1,12 @@
+# RustChrome measurement
+date: 2026-11-10T21:33:52Z
+kernel: Linux 6.8.0-1070-azure x86_64
+cpus: 4
+exe: 1342064 bytes
+pid: 13584
+rss_kb_after_8s: 154480
+rss_kb_after_13s: 154480
+idle_window_s: 5
+idle_cpu_ticks: 1
+idle_cpu_percent_of_one_core: 0
+startup_ms=1147

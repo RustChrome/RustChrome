@@ -102,7 +102,12 @@ impl Prefs {
         let mut changed = true;
         match key {
             "theme" => {
-                self.theme = if value.as_str() == Some("dark") { "dark" } else { "light" }.to_string()
+                self.theme = if value.as_str() == Some("dark") {
+                    "dark"
+                } else {
+                    "light"
+                }
+                .to_string()
             }
             "force_dark" => self.force_dark = value.as_bool().unwrap_or(self.force_dark),
             "antifp" => self.antifp = value.as_bool().unwrap_or(self.antifp),
@@ -222,8 +227,8 @@ pub fn sanitize_filename(raw: &str) -> String {
         s = "download".to_string();
     }
     const RESERVED: &[&str] = &[
-        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7",
-        "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
     ];
     let stem = s.split('.').next().unwrap_or("").to_ascii_uppercase();
     if RESERVED.contains(&stem.as_str()) {
@@ -249,7 +254,10 @@ mod tests {
         };
         p.set_json("theme", &serde_json::json!("dark"));
         assert_eq!(p.theme, "dark");
-        assert!(!p.antifp, "toggling the theme must not reset anti-fingerprinting");
+        assert!(
+            !p.antifp,
+            "toggling the theme must not reset anti-fingerprinting"
+        );
         assert_eq!(p.engine, "google");
     }
 
@@ -273,7 +281,10 @@ mod tests {
 
     #[test]
     fn bookmarks_serialize() {
-        let b = vec![Bookmark { title: "A".into(), url: "https://a.test".into() }];
+        let b = vec![Bookmark {
+            title: "A".into(),
+            url: "https://a.test".into(),
+        }];
         let s = serde_json::to_string(&b).unwrap();
         let back: Vec<Bookmark> = serde_json::from_str(&s).unwrap();
         assert_eq!(back, b);

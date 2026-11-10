@@ -7,8 +7,8 @@
 
 use rc_core::privacy::FORCE_DARK_CSS;
 use rc_core::store::Prefs;
-use webview2_com::Microsoft::Web::WebView2::Win32::*;
 use webview2_com::AddScriptToExecuteOnDocumentCreatedCompletedHandler;
+use webview2_com::Microsoft::Web::WebView2::Win32::*;
 use windows::core::{Interface, HSTRING};
 
 /// UA derived from the runtime that is actually installed, with the `Edg/`

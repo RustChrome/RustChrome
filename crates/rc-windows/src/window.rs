@@ -1,8 +1,8 @@
 //! Win32 window registration, creation and small geometry helpers.
 
-use windows::core::{w, HSTRING, PCWSTR, Result};
+use windows::core::{w, Result, HSTRING, PCWSTR};
 use windows::Win32::Foundation::{HINSTANCE, HWND, RECT};
-use windows::Win32::Graphics::Gdi::{COLOR_WINDOW, HBRUSH, UpdateWindow};
+use windows::Win32::Graphics::Gdi::{UpdateWindow, COLOR_WINDOW, HBRUSH};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::*;
 

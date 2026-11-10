@@ -71,8 +71,8 @@ pub fn create_environment() -> Result<ICoreWebView2Environment, String> {
         let base: ICoreWebView2EnvironmentOptions = options.into();
 
         let (tx, rx) = std::sync::mpsc::channel();
-        let handler = CreateCoreWebView2EnvironmentCompletedHandler::create(Box::new(
-            move |hr, env| {
+        let handler =
+            CreateCoreWebView2EnvironmentCompletedHandler::create(Box::new(move |hr, env| {
                 let res = match (hr, env) {
                     (Ok(()), Some(e)) => Ok(e),
                     (Err(e), _) => Err(format!("WebView2 environment failed: {e}")),
@@ -80,8 +80,7 @@ pub fn create_environment() -> Result<ICoreWebView2Environment, String> {
                 };
                 let _ = tx.send(res);
                 Ok(())
-            },
-        ));
+            }));
 
         CreateCoreWebView2EnvironmentWithOptions(PCWSTR::null(), &folder, &base, &handler)
             .map_err(|e| format!("CreateCoreWebView2EnvironmentWithOptions: {e}"))?;
@@ -124,11 +123,14 @@ pub fn create_controller(
             .SetIsInPrivateModeEnabled(in_private)
             .map_err(|e| format!("in-private mode: {e}"))?;
 
-        let handler = CreateCoreWebView2ControllerCompletedHandler::create(Box::new(
-            move |hr, ctrl| {
+        let handler =
+            CreateCoreWebView2ControllerCompletedHandler::create(Box::new(move |hr, ctrl| {
                 let res = match (hr, ctrl) {
                     (Ok(()), Some(c)) => match c.CoreWebView2() {
-                        Ok(wv) => Ok(Created { controller: c, webview: wv }),
+                        Ok(wv) => Ok(Created {
+                            controller: c,
+                            webview: wv,
+                        }),
                         Err(e) => Err(format!("CoreWebView2: {e}")),
                     },
                     (Err(e), _) => Err(format!("CreateCoreWebView2Controller: {e}")),
@@ -136,8 +138,7 @@ pub fn create_controller(
                 };
                 on_ready(res);
                 Ok(())
-            },
-        ));
+            }));
 
         env10
             .CreateCoreWebView2ControllerWithOptions(hwnd, &options, &handler)
