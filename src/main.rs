@@ -1005,6 +1005,9 @@ impl App {
             let a = Rc::downgrade(&self.rc());
             let tw = Rc::downgrade(&tab);
             view.connect_title_notify(move |v| {
+                if let Some(path) = probe_path() {
+                    finish_probe(v, &path);
+                }
                 let (Some(a), Some(t)) = (a.upgrade(), tw.upgrade()) else { return };
                 *t.title.borrow_mut() = v.title().map(|s| s.to_string()).unwrap_or_default();
                 t.refresh_label();
@@ -1030,14 +1033,6 @@ impl App {
             });
         }
         {
-            let v = view.clone();
-            view.connect_load_changed(move |_, ev| {
-                if ev == LoadEvent::Finished {
-                    if let Some(path) = probe_path() {
-                        finish_probe(&v, &path);
-                    }
-                }
-            });
         }
         {
             let a = Rc::downgrade(&self.rc());

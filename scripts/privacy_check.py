@@ -102,9 +102,13 @@ def main(argv):
     else:
         skip("WebRTC relay-only", "candidate policy is engine-level; not observable from script")
 
-    check("localStorage present", a["storage"]["ls"] is True, "")
-    check("IndexedDB present", a["storage"]["idb"] is True, "")
-    check("service workers present", a["storage"]["sw"] is True, "")
+    # The probe page is a data: document with an opaque origin, so the storage
+    # APIs throw there regardless of the browser. Reporting "false" as a pass
+    # would be meaningless, so this is stated as unmeasured instead.
+    skip(
+        "storage APIs available",
+        f"probe runs on an opaque origin (ls={a['storage']['ls']}, idb={a['storage']['idb']})",
+    )
 
     width = max(len(c[0]) for c in CHECKS)
     print(f"{'check'.ljust(width)}  result  detail")

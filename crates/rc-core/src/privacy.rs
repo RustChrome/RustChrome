@@ -230,6 +230,9 @@ pub const PROBE_JS: &str = r##"
       };
     } catch (e) { return { available: false, error: e.name }; }
   };
+  // The probe page is a data: document with an opaque origin, so storage
+  // access throws there. Probe, never assume.
+  const safe = (f, fallback) => { try { return f(); } catch (e) { return fallback; } };
   const out = {
     ua: navigator.userAgent,
     platform: navigator.platform || '',
@@ -247,7 +250,11 @@ pub const PROBE_JS: &str = r##"
     plugins: navigator.plugins.length,
     dnt: navigator.doNotTrack,
     cookieEnabled: navigator.cookieEnabled,
-    storage: { ls: !!window.localStorage, idb: !!window.indexedDB, sw: 'serviceWorker' in navigator },
+    storage: {
+      ls: safe(() => !!window.localStorage, false),
+      idb: safe(() => !!window.indexedDB, false),
+      sw: safe(() => 'serviceWorker' in navigator, false)
+    },
     webrtc: typeof window.RTCPeerConnection,
     canvas1: canvasHash(),
     canvas2: canvasHash(),
