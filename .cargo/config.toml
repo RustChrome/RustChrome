@@ -1,0 +1,10 @@
+# Static C runtime for the Windows build.
+#
+# Without this the MSVC target links against the Visual C++ Redistributable
+# (VCRUNTIME140.dll, VCRUNTIME140_1.dll, api-ms-win-crt-*), so the browser
+# refuses to start on a machine that does not have the redist installed —
+# which is exactly what a "portable zip" is supposed to avoid.
+#
+# Scoped to the MSVC target only; the Linux build is unaffected.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

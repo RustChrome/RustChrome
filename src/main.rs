@@ -7,87 +7,63 @@ use gtk::{
     Application, ApplicationWindow, Box as GtkBox, Button, CssProvider, Entry, EventBox, Image,
     Label, Orientation, ProgressBar, SearchEntry, Separator, Stack, StackTransitionType,
 };
+use rc_core::privacy::{antifp_js, SessionSeed};
 use serde::{Deserialize, Serialize};
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::{Rc, Weak};
 use webkit2gtk::{
-    DownloadExt, FindControllerExt, LoadEvent, SettingsExt, URIRequestExt, UserContentInjectedFrames,
+    CookieAcceptPolicy, CookieManagerExt, DownloadExt, FindControllerExt, LoadEvent,
     NavigationPolicyDecision, NavigationPolicyDecisionExt, PolicyDecisionExt, PolicyDecisionType,
-    UserContentManager,
+    SettingsExt, URIRequestExt, UserContentInjectedFrames, UserContentManager,
     UserContentManagerExt, UserStyleLevel, UserStyleSheet, WebContext, WebContextExt, WebView,
-    WebViewExt,
+    WebViewExt, WebsiteDataManagerExt,
 };
 
 const HOME: &str = "https://www.google.com/";
 const NEW_TAB_PAGE: &str = "about:rustchrome-newtab";
 const EXT_PAGE: &str = "about:rustchrome-extensions";
-const TOR_UA: &str = "Mozilla/5.0 (Windows NT 10.0; rv:128.0) Gecko/20100101 Firefox/128.0";
 
-/// Anti-fingerprinting shim: everything a page can use to recognise the machine
-/// is pinned to one generic profile, the way Tor Browser does it.
-const ANTI_FP_JS: &str = r#"
-(() => {
-  const UA = 'Mozilla/5.0 (Windows NT 10.0; rv:128.0) Gecko/20100101 Firefox/128.0';
-  const W = 1280, H = 800, D = 24;
-  const def = (o, p, v) => { try { Object.defineProperty(o, p, { get: () => v, configurable: true }); } catch (e) {} };
-  if (screen) {
-    def(screen, 'width', W); def(screen, 'height', H);
-    def(screen, 'availWidth', W); def(screen, 'availHeight', H - 40);
-    def(screen, 'colorDepth', D); def(screen, 'pixelDepth', D);
-    def(screen, 'orientation', { angle: 0, type: 'landscape-primary' });
-  }
-  def(window, 'devicePixelRatio', 1);
-  def(window, 'outerWidth', W); def(window, 'outerHeight', H);
-  if (navigator) {
-    def(navigator, 'userAgent', UA);
-    def(navigator, 'appVersion', UA.replace('Mozilla/', ''));
-    def(navigator, 'platform', 'Win32');
-    def(navigator, 'hardwareConcurrency', 2);
-    def(navigator, 'deviceMemory', 4);
-    def(navigator, 'languages', Object.freeze(['en-US', 'en']));
-    def(navigator, 'language', 'en-US');
-    def(navigator, 'plugins', Object.freeze([]));
-    def(navigator, 'mimeTypes', Object.freeze([]));
-    def(navigator, 'doNotTrack', '1');
-    if (navigator.mediaDevices) {
-      navigator.mediaDevices.enumerateDevices = () => Promise.resolve([]);
-      navigator.mediaDevices.getUserMedia = () => Promise.reject(new Error('blocked'));
-    }
-  }
-  // canvas fingerprint noise
-  const pts = (d) => { for (let i = 0; i < d.data.length; i += 997) d.data[i] = (d.data[i] + 1) & 255; };
-  try {
-    const gid = CanvasRenderingContext2D.prototype.getImageData;
-    CanvasRenderingContext2D.prototype.getImageData = function (...a) { const d = gid.apply(this, a); pts(d); return d; };
-    const tdu = HTMLCanvasElement.prototype.toDataURL;
-    HTMLCanvasElement.prototype.toDataURL = function (...a) {
-      try { const c = this.getContext('2d');
-        if (c) { const d = c.getImageData(0, 0, this.width, this.height); pts(d); c.putImageData(d, 0, 0); }
-      } catch (e) {}
-      return tdu.apply(this, a);
-    };
-  } catch (e) {}
-  // WebGL renderer masking
-  try {
-    const gp = WebGLRenderingContext.prototype.getParameter;
-    WebGLRenderingContext.prototype.getParameter = function (p) {
-      if (p === 37445 || p === 37446) return 'Generic Renderer';
-      return gp.apply(this, arguments);
-    };
-  } catch (e) {}
-  // fixed timezone
-  try {
-    Date.prototype.getTimezoneOffset = () => 0;
-    const loc = Intl.DateTimeFormat.prototype.resolvedOptions;
-    Intl.DateTimeFormat.prototype.resolvedOptions = function () {
-      const o = loc.apply(this, arguments); o.timeZone = 'UTC'; return o;
-    };
-  } catch (e) {}
-})();
-"#;
 const BOOKMARKS_PAGE: &str = "about:rustchrome-bookmarks";
+const PRIVACY_PAGE: &str = "about:rustchrome-privacy";
 
+/// RUSTCHROME_PROBE=<file>: load the probe page, dump its report, exit.
+/// Reported once, on the first finished load, so the QA workflow can measure
+/// startup without guessing.
+static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+static STARTUP_LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn log_startup_once() {
+    use std::io::Write;
+    if STARTUP_LOGGED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    let (Some(start), Ok(path)) = (START.get(), std::env::var("RUSTCHROME_STARTUP_LOG")) else {
+        return;
+    };
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = writeln!(f, "startup_ms={}", start.elapsed().as_millis());
+    }
+}
+
+fn probe_path() -> Option<PathBuf> {
+    std::env::var_os("RUSTCHROME_PROBE").map(PathBuf::from)
+}
+
+fn finish_probe(view: &WebView, path: &PathBuf) {
+    let text = view.title().map(|s| s.to_string()).unwrap_or_default();
+    // The first Finished event is the about:blank we started from; the report
+    // only arrives once the probe page has run, and it starts with "{".
+    if !text.starts_with('{') && !text.starts_with("FAIL") {
+        return;
+    }
+    let _ = std::fs::write(path, text);
+    std::process::exit(0);
+}
 
 const NEW_TAB_HTML: &str = r#"<!doctype html><html><head><meta charset="utf-8"><title>New Tab</title><style>
 *{box-sizing:border-box}
@@ -199,7 +175,6 @@ struct Bookmark {
     url: String,
 }
 
-
 struct Tab {
     id: u64,
     view: WebView,
@@ -242,9 +217,12 @@ struct App {
     theme_btn: Button,
     icon_btns: Vec<Button>,
     ucm: UserContentManager,
+    ctx: WebContext,
+    seed: Cell<SessionSeed>,
     ui_zoom: Cell<f64>,
     force_dark: Cell<bool>,
     antifp: Cell<bool>,
+    strict: Cell<bool>,
     fp_script: RefCell<Option<webkit2gtk::UserScript>>,
     dark_sheet: RefCell<Option<UserStyleSheet>>,
     dark: Cell<bool>,
@@ -385,6 +363,19 @@ fn load_antifp() -> bool {
     get_pref("antifp").unwrap_or(true)
 }
 
+/// Strict mode denies WebGL and removes WebRTC instead of coercing them.
+/// A clean exit must not look like a crash to the next run.
+fn mark_session_clean() {
+    let mut s = rc_core::features::SessionState::load();
+    s.dirty = false;
+    s.tabs.clear();
+    let _ = s.save();
+}
+
+fn load_strict() -> bool {
+    get_pref("strict").unwrap_or(false)
+}
+
 fn load_dark() -> bool {
     std::fs::read_to_string(prefs_path())
         .ok()
@@ -414,7 +405,9 @@ fn save_force_dark(force: bool) {
 /// The app logo, compiled into the binary (no external asset needed at runtime).
 fn app_icon() -> Option<gtk::gdk_pixbuf::Pixbuf> {
     let loader = gtk::gdk_pixbuf::PixbufLoader::new();
-    loader.write(include_bytes!("../assets/icon-256.png")).ok()?;
+    loader
+        .write(include_bytes!("../assets/icon-256.png"))
+        .ok()?;
     loader.close().ok()?;
     loader.pixbuf()
 }
@@ -448,7 +441,11 @@ fn scale_css(css: &str, scale: f64) -> String {
             let num: String = chars[start..i].iter().collect();
             if i + 1 < chars.len() && chars[i] == 'p' && chars[i + 1] == 'x' {
                 let v: f64 = num.parse().unwrap_or(1.0);
-                let scaled = if v == 0.0 { 0.0 } else { (v * scale).round().max(1.0) };
+                let scaled = if v == 0.0 {
+                    0.0
+                } else {
+                    (v * scale).round().max(1.0)
+                };
                 out.push_str(&format!("{}px", scaled as i64));
                 i += 2;
                 continue;
@@ -474,7 +471,10 @@ fn scale_images(w: &gtk::Widget, px: i32) {
 }
 
 fn set_icon(b: &Button, name: &str) {
-    b.set_image(Some(&Image::from_icon_name(Some(name), gtk::IconSize::LargeToolbar)));
+    b.set_image(Some(&Image::from_icon_name(
+        Some(name),
+        gtk::IconSize::LargeToolbar,
+    )));
 }
 
 impl App {
@@ -535,10 +535,20 @@ impl App {
         avatar_area.connect_draw(|_, cr| {
             let size = 30.0_f64;
             cr.set_source_rgb(0.102, 0.451, 0.910); // #1a73e8
-            cr.arc(size / 2.0, size / 2.0, size / 2.0, 0.0, std::f64::consts::PI * 2.0);
+            cr.arc(
+                size / 2.0,
+                size / 2.0,
+                size / 2.0,
+                0.0,
+                std::f64::consts::PI * 2.0,
+            );
             let _ = cr.fill();
             cr.set_source_rgb(1.0, 1.0, 1.0);
-            cr.select_font_face("Sans", gtk::cairo::FontSlant::Normal, gtk::cairo::FontWeight::Bold);
+            cr.select_font_face(
+                "Sans",
+                gtk::cairo::FontSlant::Normal,
+                gtk::cairo::FontWeight::Bold,
+            );
             cr.set_font_size(13.0);
             let ext = cr.text_extents("T").map(|e| e.width()).unwrap_or(0.0);
             cr.move_to((size - ext) / 2.0, size / 2.0 + 4.5);
@@ -596,6 +606,24 @@ impl App {
         window.add(&root);
 
         let ucm = UserContentManager::new();
+        // Ephemeral context: cookies, cache, localStorage, IndexedDB and
+        // service workers live in memory and never reach the disk, so a crash
+        // or a kill cannot leave a session behind.
+        // Private Session (default): nothing is written to disk. Standard
+        // Session reuses WebKit's persistent context so logins survive.
+        let keep_session = rc_core::store::Prefs::load().keep_session;
+        let ctx = if keep_session {
+            WebContext::default().unwrap_or_else(WebContext::new_ephemeral)
+        } else {
+            WebContext::new_ephemeral()
+        };
+        ctx.set_preferred_languages(&["en-US", "en"]);
+        if let Some(cm) = ctx.cookie_manager() {
+            cm.set_accept_policy(CookieAcceptPolicy::NoThirdParty);
+        }
+        if let Some(dm) = ctx.website_data_manager() {
+            dm.set_itp_enabled(true);
+        }
         let dark_now = load_dark();
         let zoom_now = resolve_zoom(&window);
         let css_provider = install_css(&window);
@@ -614,6 +642,9 @@ impl App {
             theme_btn: theme_btn.clone(),
             icon_btns,
             ucm,
+            ctx,
+            seed: Cell::new(SessionSeed::new()),
+            strict: Cell::new(load_strict()),
             ui_zoom: Cell::new(0.0),
             force_dark: Cell::new(load_force_dark()),
             antifp: Cell::new(load_antifp()),
@@ -696,11 +727,13 @@ impl App {
         }
         {
             let a = self.rc();
-            self.back.connect_clicked(move |_| a.with_current(|v| v.go_back()));
+            self.back
+                .connect_clicked(move |_| a.with_current(|v| v.go_back()));
         }
         {
             let a = self.rc();
-            self.forward.connect_clicked(move |_| a.with_current(|v| v.go_forward()));
+            self.forward
+                .connect_clicked(move |_| a.with_current(|v| v.go_forward()));
         }
         {
             let a = self.rc();
@@ -772,9 +805,13 @@ impl App {
 
         {
             self.window.connect_delete_event(move |w, _| {
-                if get_pref("autoclear").unwrap_or(true) {
+                let keep = rc_core::store::Prefs::load().keep_session;
+                if !keep && get_pref("autoclear").unwrap_or(true) {
                     w.hide();
-                    clear_session_data(|| std::process::exit(0));
+                    clear_session_data(|| {
+                        mark_session_clean();
+                        std::process::exit(0);
+                    });
                     return gtk::glib::Propagation::Stop;
                 }
                 gtk::glib::Propagation::Proceed
@@ -789,17 +826,29 @@ impl App {
                 let ctrl = ev.state().contains(ModifierType::CONTROL_MASK);
                 let alt = ev.state().contains(ModifierType::MOD1_MASK);
                 let shift = ev.state().contains(ModifierType::SHIFT_MASK);
-                let key = ev.keyval().name().map(|s| s.to_string()).unwrap_or_default();
+                let key = ev
+                    .keyval()
+                    .name()
+                    .map(|s| s.to_string())
+                    .unwrap_or_default();
                 match (ctrl, alt, key.as_str()) {
                     (true, _, "t") | (true, _, "T") if shift => a.reopen_closed(),
-                    (true, _, "t") | (true, _, "T") => { a.new_tab(NEW_TAB_PAGE); }
+                    (true, _, "t") | (true, _, "T") => {
+                        a.new_tab(NEW_TAB_PAGE);
+                    }
                     (true, _, "w") | (true, _, "W") => a.close_active_tab(),
                     (true, _, "l") | (true, _, "L") => {
                         a.entry.grab_focus();
                         a.entry.select_region(0, -1);
                     }
-                    (true, _, "r") | (true, _, "R") | (false, _, "F5") => a.with_current(|v| v.reload()),
-                    (true, _, "q") => std::process::exit(0),
+                    (true, _, "r") | (true, _, "R") | (false, _, "F5") => {
+                        a.with_current(|v| v.reload())
+                    }
+                    (true, _, "q") => {
+                        mark_session_clean();
+                        std::process::exit(0);
+                    }
+                    (true, _, "A") if shift => a.tab_search_dialog(),
                     (true, _, "f") | (true, _, "F") => a.show_find(),
                     (false, _, "Escape") => a.hide_find(),
                     (true, _, "d") | (true, _, "D") => a.toggle_bookmark(),
@@ -831,10 +880,27 @@ impl App {
     }
 
     fn startup_tabs(&self) {
-        let start = std::env::var("RUSTCHROME_START_URL").unwrap_or_else(|_| HOME.to_string());
-        for u in start.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
-            self.new_tab(u);
+        if probe_path().is_some() {
+            let t = self.new_tab("about:blank");
+            t.view.load_html(&rc_core::privacy::probe_html(), None);
+            self.window.show_all();
+            self.progress.hide();
+            self.findbar.hide();
+            return;
         }
+        let prefs = rc_core::store::Prefs::load();
+        let prev = rc_core::features::SessionState::load();
+        if prefs.restore_session && rc_core::features::crashed(&prev) {
+            for u in prev.tabs.iter().take(20) {
+                self.new_tab(u);
+            }
+        } else {
+            let start = std::env::var("RUSTCHROME_START_URL").unwrap_or_else(|_| HOME.to_string());
+            for u in start.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
+                self.new_tab(u);
+            }
+        }
+        self.persist_session();
         self.window.show_all();
         if let Ok(z) = std::env::var("RUSTCHROME_UI_ZOOM") {
             if let Ok(z) = z.parse::<f64>() {
@@ -843,7 +909,8 @@ impl App {
         }
         self.progress.hide();
         self.findbar.hide();
-        self.bookmarksbar.set_visible(!self.bookmarks.borrow().is_empty());
+        self.bookmarksbar
+            .set_visible(!self.bookmarks.borrow().is_empty());
     }
 
     fn current_tab(&self) -> Option<Rc<Tab>> {
@@ -894,17 +961,24 @@ impl App {
         self.tabs_box.pack_start(&tab_widget, false, false, 0);
         tab_widget.show_all();
 
-        let view = WebView::with_user_content_manager(&self.ucm);
+        let view = WebView::builder()
+            .web_context(&self.ctx)
+            .user_content_manager(&self.ucm)
+            .build();
         if let Some(s) = WebViewExt::settings(&view) {
             s.set_enable_developer_extras(false);
             s.set_javascript_can_open_windows_automatically(false);
             s.set_default_font_size(15);
             s.set_enable_smooth_scrolling(false);
-            if self.antifp.get() {
-                s.set_user_agent(Some(TOR_UA));
+            s.set_enable_dns_prefetching(false);
+            s.set_enable_hyperlink_auditing(false);
+            s.set_enable_media_stream(false);
+            if self.antifp.get() && self.strict.get() {
+                // Strict mode is the only mode that takes WebGL and WebRTC away
+                // from the engine; standard mode coerces them from script so
+                // ordinary sites keep working.
                 s.set_enable_webgl(false);
                 s.set_enable_webrtc(false);
-                s.set_enable_media_stream(false);
             }
             if let Ok(v) = std::env::var("RUSTCHROME_HWACCEL") {
                 let policy = match v.as_str() {
@@ -948,7 +1022,12 @@ impl App {
             let a = Rc::downgrade(&self.rc());
             let tw = Rc::downgrade(&tab);
             view.connect_title_notify(move |v| {
-                let (Some(a), Some(t)) = (a.upgrade(), tw.upgrade()) else { return };
+                if let Some(path) = probe_path() {
+                    finish_probe(v, &path);
+                }
+                let (Some(a), Some(t)) = (a.upgrade(), tw.upgrade()) else {
+                    return;
+                };
                 *t.title.borrow_mut() = v.title().map(|s| s.to_string()).unwrap_or_default();
                 t.refresh_label();
                 if a.index_of(&t) == a.active.get() {
@@ -960,9 +1039,15 @@ impl App {
             let a = Rc::downgrade(&self.rc());
             let tw = Rc::downgrade(&tab);
             view.connect_uri_notify(move |v| {
-                let (Some(a), Some(t)) = (a.upgrade(), tw.upgrade()) else { return };
+                let (Some(a), Some(t)) = (a.upgrade(), tw.upgrade()) else {
+                    return;
+                };
                 let raw = v.uri().map(|s| s.to_string()).unwrap_or_default();
-                let shown = if raw == "about:blank" { String::new() } else { raw };
+                let shown = if raw == "about:blank" {
+                    String::new()
+                } else {
+                    raw
+                };
                 *t.uri.borrow_mut() = shown;
                 if a.index_of(&t) == a.active.get() {
                     if !a.entry.has_focus() && a.entry.text() != t.uri.borrow().as_str() {
@@ -972,11 +1057,17 @@ impl App {
                 }
             });
         }
+        {}
         {
             let a = Rc::downgrade(&self.rc());
             let tw = Rc::downgrade(&tab);
             view.connect_load_changed(move |_, ev| {
-                let (Some(a), Some(t)) = (a.upgrade(), tw.upgrade()) else { return };
+                if ev == LoadEvent::Finished {
+                    log_startup_once();
+                }
+                let (Some(a), Some(t)) = (a.upgrade(), tw.upgrade()) else {
+                    return;
+                };
                 if a.index_of(&t) != a.active.get() {
                     return;
                 }
@@ -1062,7 +1153,9 @@ impl App {
             let a = Rc::downgrade(&self.rc());
             let tw = Rc::downgrade(&tab);
             label_btn.connect_clicked(move |_| {
-                let (Some(a), Some(t)) = (a.upgrade(), tw.upgrade()) else { return };
+                let (Some(a), Some(t)) = (a.upgrade(), tw.upgrade()) else {
+                    return;
+                };
                 a.activate(&t);
             });
         }
@@ -1070,7 +1163,9 @@ impl App {
             let a = Rc::downgrade(&self.rc());
             let tw = Rc::downgrade(&tab);
             close_btn.connect_clicked(move |_| {
-                let (Some(a), Some(t)) = (a.upgrade(), tw.upgrade()) else { return };
+                let (Some(a), Some(t)) = (a.upgrade(), tw.upgrade()) else {
+                    return;
+                };
                 a.close_tab(&t);
             });
         }
@@ -1082,12 +1177,20 @@ impl App {
     }
 
     fn index_of(&self, tab: &Rc<Tab>) -> usize {
-        self.tabs.borrow().iter().position(|t| t.id == tab.id).unwrap_or(usize::MAX)
+        self.tabs
+            .borrow()
+            .iter()
+            .position(|t| t.id == tab.id)
+            .unwrap_or(usize::MAX)
     }
 
     fn update_window_title(&self, tab: &Rc<Tab>) {
         let title = tab.title.borrow().clone();
-        let title = if title.is_empty() { "New Tab".to_string() } else { title };
+        let title = if title.is_empty() {
+            "New Tab".to_string()
+        } else {
+            title
+        };
         self.window.set_title(&format!("{} - RustChrome", title));
     }
 
@@ -1104,7 +1207,8 @@ impl App {
                 t.tab_box.style_context().remove_class("active");
             }
         }
-        self.stack.set_visible_child_name(&format!("tab-{}", tab.id));
+        self.stack
+            .set_visible_child_name(&format!("tab-{}", tab.id));
         let z = tab.zoom.get();
         tab.view.set_zoom_level(z);
         self.zoom.set(z);
@@ -1120,6 +1224,12 @@ impl App {
         if url == EXT_PAGE {
             tab.view.load_html(&self.extensions_html(), None);
             self.entry.set_text(EXT_PAGE);
+            tab.view.grab_focus();
+            return;
+        }
+        if url == PRIVACY_PAGE {
+            tab.view.load_html(&self.privacy_html(), None);
+            self.entry.set_text(PRIVACY_PAGE);
             tab.view.grab_focus();
             return;
         }
@@ -1144,7 +1254,10 @@ impl App {
         let files = ext_files();
         let mut rows = String::new();
         for f in &files {
-            let name = f.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            let name = f
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
             rows.push_str(&format!(
                 "<tr><td class=n>{}</td><td class=u>{}</td></tr>",
                 name,
@@ -1173,6 +1286,111 @@ impl App {
         )
     }
 
+    fn privacy_html(&self) -> String {
+        rc_core::dashboard::dashboard_html(&self.build_dashboard())
+    }
+
+    fn build_dashboard(&self) -> rc_core::dashboard::Dashboard {
+        use rc_core::dashboard::{Dashboard, Row};
+        let on = |b: bool| if b { "on" } else { "off" }.to_string();
+        let antifp = self.antifp.get();
+        let strict = self.strict.get();
+        Dashboard {
+            engine: "WebKitGTK 4.1".to_string(),
+            session_mode: "in-memory (ephemeral WebKit context, nothing written to disk)".to_string(),
+            settings: vec![
+                ("Anti-fingerprinting".to_string(), on(antifp)),
+                ("Strict mode".to_string(), on(strict)),
+                ("Theme".to_string(), if self.dark.get() { "dark" } else { "light" }.to_string()),
+            ],
+            protections: vec![
+                Row {
+                    name: "User agent".to_string(),
+                    state: "off".to_string(),
+                    note: "left as the engine reports it: overriding it to another browser would contradict the engine".to_string(),
+                },
+                Row {
+                    name: "Canvas".to_string(),
+                    state: if antifp { "partial" } else { "off" }.to_string(),
+                    note: "per-session noise: same pixels within a session, different every launch".to_string(),
+                },
+                Row {
+                    name: "WebGL".to_string(),
+                    state: if !antifp { "off" } else if strict { "on" } else { "partial" }.to_string(),
+                    note: if strict { "disabled in the engine".to_string() }
+                        else { "available, GPU vendor/renderer coerced from script".to_string() },
+                },
+                Row {
+                    name: "WebRTC".to_string(),
+                    state: if !antifp { "off" } else if strict { "on" } else { "partial" }.to_string(),
+                    note: if strict { "disabled in the engine".to_string() }
+                        else { "available; WebKitGTK has no per-candidate policy, script requests relay-only".to_string() },
+                },
+                Row {
+                    name: "Time zone".to_string(),
+                    state: on(antifp),
+                    note: "UTC in getTimezoneOffset, Intl and Date#toString".to_string(),
+                },
+                Row {
+                    name: "Languages".to_string(),
+                    state: on(antifp),
+                    note: "en-US,en in script and in Accept-Language".to_string(),
+                },
+                Row {
+                    name: "Screen size".to_string(),
+                    state: "off".to_string(),
+                    note: "reported as-is: a pinned size would contradict the real window".to_string(),
+                },
+                Row {
+                    name: "Cookies / third-party storage".to_string(),
+                    state: "on".to_string(),
+                    note: "accept policy: no third party; ITP enabled".to_string(),
+                },
+                Row {
+                    name: "Permissions".to_string(),
+                    state: "on".to_string(),
+                    note: "every request denied".to_string(),
+                },
+                Row {
+                    name: "DNS prefetch".to_string(),
+                    state: "on".to_string(),
+                    note: "disabled in engine settings".to_string(),
+                },
+                Row {
+                    name: "Hyperlink auditing (a ping)".to_string(),
+                    state: "on".to_string(),
+                    note: "disabled in engine settings".to_string(),
+                },
+                Row {
+                    name: "Tracker blocking".to_string(),
+                    state: "partial".to_string(),
+                    note: "ITP only; WebKitGTK exposes no blocked-request count".to_string(),
+                },
+                Row {
+                    name: "Ad blocking".to_string(),
+                    state: "off".to_string(),
+                    note: "not implemented".to_string(),
+                },
+                Row {
+                    name: "Session storage".to_string(),
+                    state: "on".to_string(),
+                    note: "ephemeral context: cookies, cache, localStorage, IndexedDB and service workers live in memory".to_string(),
+                },
+            ],
+            permissions: vec![
+                "Microphone, Camera, Geolocation, Notifications".to_string(),
+                "Clipboard, MIDI, pointer lock, install of media plugins".to_string(),
+                "Everything else WebKitGTK asks about".to_string(),
+            ],
+            limitations: vec![
+                "Not anonymity and not Tor. A page that runs JavaScript can still infer things about the machine.".to_string(),
+                "In-memory storage means logins do not survive a restart; that is deliberate.".to_string(),
+                "Font metrics and the GPU model cannot be normalised.".to_string(),
+                "No blocker statistics: the engine does not report how many requests ITP stopped.".to_string(),
+            ],
+        }
+    }
+
     fn bookmarks_html(&self) -> String {
         let bm = self.bookmarks.borrow().clone();
         let mut rows = String::new();
@@ -1198,12 +1416,232 @@ impl App {
         )
     }
 
+    /// Mirror the open tabs into the shared session file so a crash can be
+    /// recovered and a clean exit can clear it.
+    fn persist_session(&self) {
+        let urls: Vec<String> = self
+            .tabs
+            .borrow()
+            .iter()
+            .map(|t| t.uri.borrow().clone())
+            .filter(|u| !u.is_empty())
+            .collect();
+        if urls.is_empty() {
+            return;
+        }
+        let mut s = rc_core::features::SessionState::load();
+        s.tabs = urls;
+        s.active = self.active.get();
+        s.dirty = true;
+        let _ = s.save();
+    }
+
+    fn import_bookmarks_dialog(&self) {
+        let dlg = gtk::FileChooserDialog::with_buttons(
+            Some("Import bookmarks"),
+            Some(&self.window),
+            gtk::FileChooserAction::Open,
+            &[
+                ("Cancel", gtk::ResponseType::Cancel),
+                ("Import", gtk::ResponseType::Accept),
+            ],
+        );
+        let filter = gtk::FileFilter::new();
+        filter.set_name(Some("Bookmarks (HTML or Chrome JSON)"));
+        filter.add_pattern("*.html");
+        filter.add_pattern("*.htm");
+        filter.add_pattern("*");
+        dlg.add_filter(filter);
+        let a = self.rc();
+        dlg.connect_response(move |d, resp| {
+            if resp == gtk::ResponseType::Accept {
+                if let Some(path) = d.filename() {
+                    match rc_core::features::parse_bookmarks_file(&path) {
+                        Ok(items) => {
+                            // The GTK shell has its own Bookmark type; convert,
+                            // merge with the shared code, convert back.
+                            let mut merged: Vec<rc_core::store::Bookmark> = a
+                                .bookmarks
+                                .borrow()
+                                .iter()
+                                .map(|b| rc_core::store::Bookmark {
+                                    title: b.title.clone(),
+                                    url: b.url.clone(),
+                                })
+                                .collect();
+                            let (added, skipped) =
+                                rc_core::features::merge_bookmarks(&mut merged, items);
+                            {
+                                let mut bm = a.bookmarks.borrow_mut();
+                                bm.clear();
+                                for b in merged {
+                                    bm.push(Bookmark {
+                                        title: b.title,
+                                        url: b.url,
+                                    });
+                                }
+                                let _ = rc_core::store::save_bookmarks(
+                                    &bm.iter()
+                                        .map(|b| rc_core::store::Bookmark {
+                                            title: b.title.clone(),
+                                            url: b.url.clone(),
+                                        })
+                                        .collect::<Vec<_>>(),
+                                );
+                            }
+                            a.refresh_bookmarks_bar();
+                            a.info(&format!(
+                                "Imported {added} bookmark(s), skipped {skipped} duplicate(s)."
+                            ));
+                        }
+                        Err(e) => a.info(&format!("Import failed: {e}")),
+                    }
+                }
+            }
+            d.close();
+        });
+        dlg.show_all();
+    }
+
+    fn export_bookmarks(&self) {
+        let dest = rc_core::downloads_dir().join("rustchrome-bookmarks.html");
+        let bookmarks: Vec<rc_core::store::Bookmark> = self
+            .bookmarks
+            .borrow()
+            .iter()
+            .map(|b| rc_core::store::Bookmark {
+                title: b.title.clone(),
+                url: b.url.clone(),
+            })
+            .collect();
+        let html = rc_core::features::export_netscape(&bookmarks);
+        match std::fs::write(&dest, html) {
+            Ok(()) => self.info(&format!("Exported bookmarks to {}", dest.display())),
+            Err(e) => self.info(&format!("Export failed: {e}")),
+        }
+    }
+
+    fn info(&self, text: &str) {
+        let dlg = gtk::MessageDialog::new(
+            Some(&self.window),
+            gtk::DialogFlags::MODAL,
+            gtk::MessageType::Info,
+            gtk::ButtonsType::Ok,
+            text,
+        );
+        dlg.connect_response(|d, _| d.close());
+        dlg.show();
+    }
+
+    /// Ctrl+Shift+A: filter open tabs by title or address and switch to one.
+    fn tab_search_dialog(&self) {
+        let dlg = gtk::Dialog::with_buttons(
+            Some("Search tabs"),
+            Some(&self.window),
+            gtk::DialogFlags::MODAL,
+            &[("Close", gtk::ResponseType::Close)],
+        );
+        dlg.set_default_size(460, 340);
+        let area = dlg.content_area();
+        let entry = Entry::new();
+        entry.set_placeholder_text(Some("Search tabs by title or address"));
+        area.pack_start(&entry, false, false, 6);
+        let list = GtkBox::new(Orientation::Vertical, 2);
+        area.pack_start(&list, true, true, 0);
+
+        let rebuild = {
+            let a = self.rc();
+            let list = list.clone();
+            let dlg = dlg.clone();
+            move |query: &str| {
+                for child in list.children() {
+                    list.remove(&child);
+                }
+                let pairs: Vec<(String, String)> = a
+                    .tabs
+                    .borrow()
+                    .iter()
+                    .map(|t| (t.title.borrow().clone(), t.uri.borrow().clone()))
+                    .collect();
+                for idx in rc_core::features::match_tabs(query, &pairs)
+                    .into_iter()
+                    .take(12)
+                {
+                    let (title, uri) = pairs[idx].clone();
+                    let label = if title.is_empty() { uri.clone() } else { title };
+                    let btn = Button::with_label(&format!("{label}  —  {uri}"));
+                    btn.set_relief(gtk::ReliefStyle::None);
+                    btn.style_context().add_class("tablabel");
+                    let a2 = a.clone();
+                    let dlg2 = dlg.clone();
+                    btn.connect_clicked(move |_| {
+                        if let Some(t) = a2.tabs.borrow().get(idx).cloned() {
+                            a2.activate(&t);
+                        }
+                        dlg2.close();
+                    });
+                    list.pack_start(&btn, false, false, 0);
+                    btn.show();
+                }
+            }
+        };
+        rebuild("");
+        {
+            let rebuild = rebuild.clone();
+            entry.connect_changed(move |e| rebuild(&e.text()));
+        }
+        area.show_all();
+        let rebuild = rebuild.clone();
+        dlg.connect_response(move |d, _| {
+            d.close();
+            let _ = &rebuild;
+        });
+        dlg.show();
+        entry.grab_focus();
+    }
+
+    fn recently_closed_dialog(&self) {
+        let urls: Vec<String> = self.closed.borrow().iter().rev().cloned().collect();
+        if urls.is_empty() {
+            self.info("Nothing has been closed in this session.");
+            return;
+        }
+        let dlg = gtk::Dialog::with_buttons(
+            Some("Recently closed"),
+            Some(&self.window),
+            gtk::DialogFlags::MODAL,
+            &[("Close", gtk::ResponseType::Close)],
+        );
+        dlg.set_default_size(520, 320);
+        let area = dlg.content_area();
+        let list = GtkBox::new(Orientation::Vertical, 2);
+        area.pack_start(&list, true, true, 0);
+        for url in urls {
+            let btn = Button::with_label(&url);
+            btn.set_relief(gtk::ReliefStyle::None);
+            let a = self.rc();
+            let dlg2 = dlg.clone();
+            let u = url.clone();
+            btn.connect_clicked(move |_| {
+                a.new_tab(&u);
+                dlg2.close();
+            });
+            list.pack_start(&btn, false, false, 0);
+        }
+        area.show_all();
+        dlg.connect_response(|d, _| d.close());
+        dlg.show();
+    }
+
     fn install_userscript_dialog(&self) {
         let dlg = gtk::Dialog::with_buttons(
             Some("Install userscript"),
             Some(&self.window),
             gtk::DialogFlags::MODAL,
-            &[("Cancel", gtk::ResponseType::Cancel), ("Install", gtk::ResponseType::Ok)],
+            &[
+                ("Cancel", gtk::ResponseType::Cancel),
+                ("Install", gtk::ResponseType::Ok),
+            ],
         );
         let area = dlg.content_area();
         let entry = Entry::new();
@@ -1216,8 +1654,19 @@ impl App {
             if resp == gtk::ResponseType::Ok {
                 let url = entry.text().to_string();
                 if url.starts_with("http") {
-                    let name = url.rsplit('/').next().unwrap_or("script.js").split('?').next().unwrap_or("script.js").to_string();
-                    let name = if name.ends_with(".js") { name } else { format!("{}.js", name) };
+                    let name = url
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or("script.js")
+                        .split('?')
+                        .next()
+                        .unwrap_or("script.js")
+                        .to_string();
+                    let name = if name.ends_with(".js") {
+                        name
+                    } else {
+                        format!("{}.js", name)
+                    };
                     let dest = ext_dir().join(&name);
                     let ok = std::process::Command::new("curl")
                         .args(["-sSL", "--max-time", "20", "-o"])
@@ -1264,9 +1713,14 @@ impl App {
         }
         set_icon(
             &self.theme_btn,
-            if dark { "weather-clear-symbolic" } else { "weather-clear-night-symbolic" },
+            if dark {
+                "weather-clear-symbolic"
+            } else {
+                "weather-clear-night-symbolic"
+            },
         );
-        self.theme_btn.set_tooltip_text(Some(if dark { "Light mode" } else { "Dark mode" }));
+        self.theme_btn
+            .set_tooltip_text(Some(if dark { "Light mode" } else { "Dark mode" }));
 
         let bg = if dark {
             gtk::gdk::RGBA::new(0.125, 0.129, 0.141, 1.0)
@@ -1287,7 +1741,9 @@ impl App {
     fn install_extensions(&self) -> Vec<String> {
         let mut names = Vec::new();
         for path in ext_files() {
-            let Ok(code) = std::fs::read_to_string(&path) else { continue };
+            let Ok(code) = std::fs::read_to_string(&path) else {
+                continue;
+            };
             let name = path
                 .file_stem()
                 .map(|s| s.to_string_lossy().to_string())
@@ -1306,6 +1762,9 @@ impl App {
     }
 
     fn new_identity(&self) {
+        // New identity = new canvas key as well as fresh storage.
+        self.seed.set(SessionSeed::new());
+        self.sync_fp_script();
         let a = self.rc();
         clear_session_data(move || {
             let tabs: Vec<Rc<Tab>> = a.tabs.borrow().clone();
@@ -1324,8 +1783,9 @@ impl App {
             self.ucm.remove_script(&old);
         }
         if self.antifp.get() {
+            let payload = antifp_js(self.seed.get(), self.strict.get());
             let script = webkit2gtk::UserScript::new(
-                ANTI_FP_JS,
+                &payload,
                 UserContentInjectedFrames::AllFrames,
                 webkit2gtk::UserScriptInjectionTime::Start,
                 &[],
@@ -1338,11 +1798,13 @@ impl App {
 
     fn apply_fingerprint_mode(&self) {
         let on = self.antifp.get();
+        let strict = self.strict.get();
         for t in self.tabs.borrow().iter() {
             if let Some(s) = WebViewExt::settings(&t.view) {
-                s.set_user_agent(if on { Some(TOR_UA) } else { None });
-                s.set_enable_webgl(!on);
-                s.set_enable_webrtc(!on);
+                // Engine-level switches only exist as an on/off pair, so they
+                // are used only in strict mode; standard mode coerces from JS.
+                s.set_enable_webgl(!(on && strict));
+                s.set_enable_webrtc(!(on && strict));
                 s.set_enable_media_stream(!on);
             }
             t.view.reload();
@@ -1355,20 +1817,27 @@ impl App {
             self.back.set_sensitive(t.view.can_go_back());
             self.forward.set_sensitive(t.view.can_go_forward());
             let loading = t.view.is_loading();
-            set_icon(&self.reload, if loading { "process-stop-symbolic" } else { "view-refresh-symbolic" });
-            self.reload.set_tooltip_text(Some(if loading { "Stop loading" } else { "Reload" }));
+            set_icon(
+                &self.reload,
+                if loading {
+                    "process-stop-symbolic"
+                } else {
+                    "view-refresh-symbolic"
+                },
+            );
+            self.reload
+                .set_tooltip_text(Some(if loading { "Stop loading" } else { "Reload" }));
             if let Some(img) = self.reload.image() {
                 if let Ok(img) = img.downcast::<Image>() {
                     img.set_pixel_size(((16.0 * self.ui_zoom.get()).round() as i32).clamp(10, 96));
                 }
             }
-            self.entry.set_primary_icon_name(Some(
-                if t.uri.borrow().starts_with("https://") {
+            self.entry
+                .set_primary_icon_name(Some(if t.uri.borrow().starts_with("https://") {
                     "channel-secure-symbolic"
                 } else {
                     "system-search-symbolic"
-                },
-            ));
+                }));
         }
     }
 
@@ -1376,8 +1845,19 @@ impl App {
         if let Some(t) = self.current_tab() {
             let url = t.uri.borrow().clone();
             let marked = !url.is_empty() && self.bookmarks.borrow().iter().any(|b| b.url == url);
-            set_icon(&self.star, if marked { "starred-symbolic" } else { "non-starred-symbolic" });
-            self.star.set_tooltip_text(Some(if marked { "Remove bookmark" } else { "Bookmark this tab" }));
+            set_icon(
+                &self.star,
+                if marked {
+                    "starred-symbolic"
+                } else {
+                    "non-starred-symbolic"
+                },
+            );
+            self.star.set_tooltip_text(Some(if marked {
+                "Remove bookmark"
+            } else {
+                "Bookmark this tab"
+            }));
         }
     }
 
@@ -1389,7 +1869,11 @@ impl App {
         }
         let title = {
             let ti = t.title.borrow().clone();
-            if ti.is_empty() { url.clone() } else { ti }
+            if ti.is_empty() {
+                url.clone()
+            } else {
+                ti
+            }
         };
         {
             let mut bm = self.bookmarks.borrow_mut();
@@ -1420,7 +1904,9 @@ impl App {
             btn.set_tooltip_text(Some(&b.url));
             let row = GtkBox::new(Orientation::Horizontal, 6);
             let icon = Image::from_icon_name(Some("folder-symbolic"), gtk::IconSize::Menu);
-            icon.set_pixel_size(((14.0 * self.ui_zoom.get().max(1.0)).round() as i32).clamp(10, 40));
+            icon.set_pixel_size(
+                ((14.0 * self.ui_zoom.get().max(1.0)).round() as i32).clamp(10, 40),
+            );
             row.pack_start(&icon, false, false, 0);
             row.pack_start(&Label::new(Some(&b.title)), false, false, 0);
             btn.add(&row);
@@ -1511,7 +1997,10 @@ impl App {
     }
 
     fn zoom_by(&self, delta: f64) {
-        let base = self.current_tab().map(|t| t.zoom.get()).unwrap_or(self.zoom.get());
+        let base = self
+            .current_tab()
+            .map(|t| t.zoom.get())
+            .unwrap_or(self.zoom.get());
         self.set_zoom(base + delta);
     }
 
@@ -1542,8 +2031,8 @@ impl App {
         if let Err(e) = provider.load_from_data(css.as_bytes()) {
             eprintln!("css error: {e}");
         }
-        if let Some(screen) = gtk::prelude::WidgetExt::screen(&self.window)
-            .or_else(gtk::gdk::Screen::default)
+        if let Some(screen) =
+            gtk::prelude::WidgetExt::screen(&self.window).or_else(gtk::gdk::Screen::default)
         {
             // drop the previous zoomed provider so they cannot pile up
             {
@@ -1573,7 +2062,9 @@ impl App {
     }
 
     fn setup_downloads(&self) {
-        let Some(ctx) = WebContext::default() else { return };
+        let Some(ctx) = WebContext::default() else {
+            return;
+        };
         ctx.set_cache_model(if std::env::var("RUSTCHROME_LEAN").is_ok() {
             webkit2gtk::CacheModel::DocumentViewer
         } else {
@@ -1595,8 +2086,14 @@ impl App {
             let mut n = 1;
             while dest.exists() {
                 let p = PathBuf::from(&name);
-                let stem = p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "file".into());
-                let ext = p.extension().map(|s| format!(".{}", s.to_string_lossy())).unwrap_or_default();
+                let stem = p
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "file".into());
+                let ext = p
+                    .extension()
+                    .map(|s| format!(".{}", s.to_string_lossy()))
+                    .unwrap_or_default();
                 dest = downloads.join(format!("{} ({}){}", stem, n, ext));
                 n += 1;
             }
@@ -1628,7 +2125,9 @@ impl App {
         let mi_new = add("New tab");
         {
             let a = self.rc();
-            mi_new.connect_activate(move |_| { a.new_tab(NEW_TAB_PAGE); });
+            mi_new.connect_activate(move |_| {
+                a.new_tab(NEW_TAB_PAGE);
+            });
         }
         let mi_reopen = add("Reopen closed tab");
         {
@@ -1685,6 +2184,49 @@ impl App {
             let a = self.rc();
             mi_ext_add.connect_activate(move |_| a.install_userscript_dialog());
         }
+        let mi_privacy = add("Privacy");
+        {
+            let a = self.rc();
+            mi_privacy.connect_activate(move |_| {
+                if let Some(t) = a.current_tab() {
+                    a.navigate(&t, PRIVACY_PAGE);
+                }
+            });
+        }
+        let mi_import = add("Import bookmarks…");
+        {
+            let a = self.rc();
+            mi_import.connect_activate(move |_| a.import_bookmarks_dialog());
+        }
+        let mi_export = add("Export bookmarks");
+        {
+            let a = self.rc();
+            mi_export.connect_activate(move |_| a.export_bookmarks());
+        }
+        let mi_tabs = add("Search tabs…  (Ctrl+Shift+A)");
+        {
+            let a = self.rc();
+            mi_tabs.connect_activate(move |_| a.tab_search_dialog());
+        }
+        let mi_closed = add("Recently closed…");
+        {
+            let a = self.rc();
+            mi_closed.connect_activate(move |_| a.recently_closed_dialog());
+        }
+        let mi_strict = add(if self.strict.get() {
+            "Strict mode: on"
+        } else {
+            "Strict mode: off"
+        });
+        {
+            let a = self.rc();
+            mi_strict.connect_activate(move |_| {
+                let now = !a.strict.get();
+                a.strict.set(now);
+                set_pref("strict", now);
+                a.apply_fingerprint_mode();
+            });
+        }
         let mi_newid = add("New identity  (clear cookies + history)");
         {
             let a = self.rc();
@@ -1699,7 +2241,11 @@ impl App {
             let now = !get_pref("autoclear").unwrap_or(true);
             set_pref("autoclear", now);
         });
-        let mi_fp = add(if self.antifp.get() { "Anti-fingerprinting: on" } else { "Anti-fingerprinting: off" });
+        let mi_fp = add(if self.antifp.get() {
+            "Anti-fingerprinting: on"
+        } else {
+            "Anti-fingerprinting: off"
+        });
         {
             let a = self.rc();
             mi_fp.connect_activate(move |_| {
@@ -1709,7 +2255,11 @@ impl App {
                 a.apply_fingerprint_mode();
             });
         }
-        let mi_force = add(if self.force_dark.get() { "Force dark pages: on" } else { "Force dark pages: off" });
+        let mi_force = add(if self.force_dark.get() {
+            "Force dark pages: on"
+        } else {
+            "Force dark pages: off"
+        });
         {
             let a = self.rc();
             mi_force.connect_activate(move |_| {
@@ -1720,7 +2270,11 @@ impl App {
                 a.apply_theme(d, false);
             });
         }
-        let mi_theme = add(if self.dark.get() { "Light mode" } else { "Dark mode" });
+        let mi_theme = add(if self.dark.get() {
+            "Light mode"
+        } else {
+            "Dark mode"
+        });
         {
             let a = self.rc();
             mi_theme.connect_activate(move |_| {
@@ -1744,11 +2298,18 @@ impl App {
         menu.append(&mi_bm);
         menu.append(&mi_ext);
         menu.append(&mi_ext_add);
+        menu.append(&mi_privacy);
+        menu.append(&mi_tabs);
+        menu.append(&mi_closed);
+        menu.append(&gtk::SeparatorMenuItem::new());
+        menu.append(&mi_import);
+        menu.append(&mi_export);
         menu.append(&gtk::SeparatorMenuItem::new());
         menu.append(&mi_newid);
         menu.append(&mi_autoclear);
         menu.append(&gtk::SeparatorMenuItem::new());
         menu.append(&mi_fp);
+        menu.append(&mi_strict);
         menu.append(&mi_force);
         menu.append(&mi_theme);
         menu.append(&gtk::SeparatorMenuItem::new());
@@ -1759,14 +2320,19 @@ impl App {
     }
 }
 
-
 /// Wipes cookies, caches, localStorage, IndexedDB, sessions — everything a
 /// session leaves behind — then runs `then` on the GTK main loop.
 fn clear_session_data(then: impl FnOnce() + 'static) {
     use gtk::glib::object::ObjectType;
-    let Some(ctx) = WebContext::default() else { then(); return };
+    let Some(ctx) = WebContext::default() else {
+        then();
+        return;
+    };
     ctx.clear_cache();
-    let Some(dm) = ctx.website_data_manager() else { then(); return };
+    let Some(dm) = ctx.website_data_manager() else {
+        then();
+        return;
+    };
 
     let boxed: Box<Box<dyn FnOnce()>> = Box::new(Box::new(then));
     unsafe {
@@ -1825,12 +2391,17 @@ fn save_bookmarks(bm: &[Bookmark]) {
 }
 
 fn main() {
+    let _ = START.set(std::time::Instant::now());
     {
         let path = data_dir().join("crash.log");
         std::panic::set_hook(Box::new(move |info| {
             let msg = format!("[panic] {}\n", info);
             eprintln!("{msg}");
-            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+            {
                 use std::io::Write;
                 let _ = f.write_all(msg.as_bytes());
             }

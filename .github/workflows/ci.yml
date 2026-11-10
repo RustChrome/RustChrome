@@ -1,0 +1,192 @@
+name: CI
+
+on:
+  push:
+    branches:
+      [
+        "main",
+        "feat/windows-foundation",
+        "feat/privacy-hardening",
+        "feat/everyday-features",
+        "feat/qa",
+        "feat/beta",
+      ]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  # Single source of truth for artifact names; keep in step with Cargo.toml.
+  VERSION: "0.2.0"
+
+jobs:
+  linux:
+    name: Linux (GTK3 / WebKitGTK)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: System dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgtk-3-dev libwebkit2gtk-4.1-dev \
+            xvfb dbus-x11
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build the Linux package (unchanged release path)
+        run: cargo build --release
+      - name: Binary
+        run: ls -l target/release/rustchrome
+
+      - name: Package tarball
+        run: |
+          set -euo pipefail
+          NAME="rustchrome-${VERSION}-x86_64-linux"
+          rm -rf "dist/$NAME"
+          mkdir -p "dist/$NAME/docs"
+          cp target/release/rustchrome "dist/$NAME/"
+          cp README.md LICENSE "dist/$NAME/"
+          cp docs/*.md "dist/$NAME/docs/"
+          tar --sort=name --mtime='2026-01-01 00:00Z' --owner=0 --group=0 --numeric-owner \
+            -C dist -czf "dist/$NAME.tar.gz" "$NAME"
+          ( cd dist && sha256sum "$NAME.tar.gz" > "$NAME.tar.gz.sha256" )
+          cat "dist/$NAME.tar.gz.sha256"
+          ls -l "dist/$NAME.tar.gz"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rustchrome-linux-x64
+          path: |
+            dist/rustchrome-*-x86_64-linux.tar.gz
+            dist/rustchrome-*-x86_64-linux.tar.gz.sha256
+          if-no-files-found: warn
+
+      - name: Privacy probe (two fresh sessions)
+        run: |
+          for i in 1 2; do
+            timeout 120 xvfb-run -a env WEBKIT_DISABLE_COMPOSITING_MODE=1 LIBGL_ALWAYS_SOFTWARE=1 \
+              RUSTCHROME_PROBE="$PWD/probe$i.json" \
+              dbus-run-session -- ./target/release/rustchrome || echo "probe $i exit $?"
+            sleep 1
+          done
+          ls -l probe1.json probe2.json || true
+
+      - name: Check privacy invariants
+        run: python3 scripts/privacy_check.py probe1.json probe2.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probe-linux
+          path: probe*.json
+          if-no-files-found: warn
+
+  windows:
+    name: Windows (Win32 / WebView2)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Versions
+        run: |
+          rustc -V
+          cargo -V
+          Write-Host "WebView2 runtime:"
+          Get-ChildItem "C:\Program Files (x86)\Microsoft\EdgeWebView\Application" -ErrorAction SilentlyContinue | Select-Object -First 3
+
+      - name: Unit tests (shared core + Windows helpers)
+        run: |
+          cargo test -p rc-core
+          if ($LastExitCode -ne 0) { exit $LastExitCode }
+          cargo test -p rustchrome-win
+          if ($LastExitCode -ne 0) { exit $LastExitCode }
+
+      - name: Clippy (informational)
+        continue-on-error: true
+        run: cargo clippy -p rc-core -p rustchrome-win --all-targets
+
+      - name: Release build
+        run: cargo build --release -p rustchrome-win
+
+      - name: No dynamic CRT imports (portable zip must run anywhere)
+        shell: powershell
+        run: |
+          $ascii = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes("target\release\rustchrome.exe"))
+          $bad = @("VCRUNTIME140.dll", "VCRUNTIME140_1.dll", "MSVCP140.dll", "ucrtbase.dll", "api-ms-win-crt")
+          $found = @($bad | Where-Object { $ascii.Contains($_) })
+          if ($found.Count -gt 0) {
+            Write-Host "::error::executable still imports the dynamic CRT: $($found -join ', ')"
+            exit 1
+          }
+          Write-Output "ok: no dynamic CRT imports"
+
+      - name: Smoke test (launch, render, shut down)
+        shell: powershell
+        run: |
+          $env:RUSTCHROME_SMOKE_OUT = "$PWD\smoke.txt"
+          Remove-Item smoke.txt -ErrorAction SilentlyContinue
+          $p = Start-Process -FilePath ".\target\release\rustchrome.exe" -ArgumentList "--smoke-test" -PassThru -Wait
+          Write-Output "exit code: $($p.ExitCode)"
+          if (Test-Path smoke.txt) { Write-Output "smoke.txt: $(Get-Content smoke.txt -Raw)" } else { Write-Output "no smoke output" }
+          if (Test-Path smoke.txt.log) { Write-Output "--- trace ---"; Get-Content smoke.txt.log }
+          if ($p.ExitCode -ne 0) { Write-Host "::error::browser exited with $($p.ExitCode)"; exit 1 }
+          if (-not (Test-Path smoke.txt)) { Write-Host "::error::no smoke result file"; exit 1 }
+          if (-not (Select-String -Path smoke.txt -Pattern '^OK')) { Write-Host "::error::navigation did not complete"; exit 1 }
+
+      - name: Privacy probe (two fresh sessions)
+        shell: powershell
+        run: |
+          foreach ($i in 1..2) {
+            $out = Join-Path $PWD "probe$i.json"
+            $p = Start-Process -FilePath ".\target\release\rustchrome.exe" -ArgumentList "--privacy-probe", $out -PassThru -Wait
+            Write-Output "probe $i exit $($p.ExitCode)"
+          }
+          Get-ChildItem probe*.json | Select-Object Name, Length
+
+      - name: Check privacy invariants
+        run: python scripts/privacy_check.py probe1.json probe2.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probe-windows
+          path: probe*.json
+          if-no-files-found: warn
+
+      - name: Package portable zip
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target\release\rustchrome.exe dist\
+          Copy-Item docs\WINDOWS.md dist\README-WINDOWS.md -ErrorAction SilentlyContinue
+          $zip = "rustchrome-$($env:VERSION)-x86_64-windows.zip"
+          Compress-Archive -Path dist\* -DestinationPath $zip -Force
+          # WriteAllText keeps LF endings: Out-File writes CRLF, and a CRLF
+          # checksum file fails `sha256sum -c` on Linux and in git bash.
+          $sum = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          [System.IO.File]::WriteAllText("$PWD\$zip.sha256", "$sum  $zip`n")
+          Get-Item $zip | Select-Object Name, Length
+
+      - name: Exe details
+        shell: powershell
+        run: |
+          Get-Item target\release\rustchrome.exe | Select-Object Name, Length, @{n='Version';e={$_.VersionInfo.FileVersion}}
+          (Get-Item target\release\rustchrome.exe).VersionInfo | Format-List ProductName,FileDescription,FileVersion,LegalCopyright
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rustchrome-windows-x64
+          path: |
+            rustchrome-*-x86_64-windows.zip
+            rustchrome-*-x86_64-windows.zip.sha256
+            smoke.txt
+            smoke.txt.log
+
+      - name: Lock file produced by this build
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-lock
+          path: Cargo.lock
+          if-no-files-found: warn

@@ -1,0 +1,852 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="light dark">
+<title>RustChrome</title>
+<style>
+  /* Palette and geometry mirror the GTK shell (src/main.rs, CSS constant) so the
+     two builds look like the same browser. */
+  :root {
+    --window: #ffffff;
+    --headerbar: #dee1e6;
+    --toolbar: #ffffff;
+    --text: #202124;
+    --tab-text: #5f6368;
+    --tab-hover: #cfd3d9;
+    --tab-active-bg: #ffffff;
+    --tab-active-fg: #202124;
+    --close-hover: #dadce0;
+    --url-bg: #f1f3f4;
+    --url-fg: #202124;
+    --url-focus-bg: #ffffff;
+    --url-border: #1a73e8;
+    --btn-fg: #5f6368;
+    --btn-hover: #f1f3f4;
+    --bm-fg: #3c4043;
+    --bm-hover: #f1f3f4;
+    --menu-bg: #ffffff;
+    --menu-fg: #202124;
+    --menu-hover: #f1f3f4;
+    --sep: #e8eaed;
+    --accent: #1a73e8;
+    --shadow: rgba(32, 33, 36, .28);
+  }
+  html.dark {
+    --window: #202124;
+    --headerbar: #202124;
+    --toolbar: #35363a;
+    --text: #e8eaed;
+    --tab-text: #9aa0a6;
+    --tab-hover: #2d2f31;
+    --tab-active-bg: #35363a;
+    --tab-active-fg: #e8eaed;
+    --close-hover: #4a4d51;
+    --url-bg: #202124;
+    --url-fg: #e8eaed;
+    --url-focus-bg: #202124;
+    --url-border: #8ab4f8;
+    --btn-fg: #9aa0a6;
+    --btn-hover: #4a4d51;
+    --bm-fg: #bdc1c6;
+    --bm-hover: #4a4d51;
+    --menu-bg: #35363a;
+    --menu-fg: #e8eaed;
+    --menu-hover: #4a4d51;
+    --sep: #4a4d51;
+    --accent: #8ab4f8;
+    --shadow: rgba(0, 0, 0, .6);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; overflow: hidden;
+    background: var(--window); color: var(--text);
+    font-family: "Segoe UI", Cantarell, system-ui, Arial, sans-serif;
+    font-size: 12px; user-select: none; cursor: default;
+  }
+  button { font: inherit; color: inherit; background: transparent; border: 0; padding: 0; cursor: default; }
+  button:disabled { opacity: .38; }
+  svg { display: block; }
+
+  #chrome { display: flex; flex-direction: column; }
+
+  /* headerbar: the tab strip lives here, as in the GTK HeaderBar */
+  #headerbar {
+    display: flex; align-items: flex-end;
+    min-height: 40px; padding: 4px 2px 0 4px;
+    background: var(--headerbar);
+  }
+  #tabs { display: flex; align-items: flex-end; gap: 2px; min-width: 0; overflow: hidden; }
+  .tab {
+    display: flex; align-items: center; gap: 4px;
+    min-height: 34px; max-width: 240px; min-width: 58px;
+    padding: 0 6px 0 12px; margin-right: 2px;
+    border-radius: 8px 8px 0 0; color: var(--tab-text);
+  }
+  .tab:hover { background: var(--tab-hover); }
+  .tab.active { background: var(--tab-active-bg); color: var(--tab-active-fg); }
+  .tab .title {
+    flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; font-size: 12px;
+  }
+  .tab .spinner {
+    width: 12px; height: 12px; border-radius: 50%; flex: 0 0 auto;
+    border: 2px solid var(--tab-text); border-top-color: transparent;
+    animation: spin .8s linear infinite; opacity: .7;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .tab .close {
+    width: 18px; height: 18px; min-height: 18px; border-radius: 999px;
+    display: flex; align-items: center; justify-content: center;
+    color: inherit; flex: 0 0 auto;
+  }
+  .tab .close:hover { background: var(--close-hover); color: var(--tab-active-fg); }
+  #newtab {
+    font-size: 19px; line-height: 1; color: var(--tab-text);
+    padding: 0 10px; height: 34px; border-radius: 999px; margin-bottom: 2px;
+  }
+  #newtab:hover { background: var(--tab-hover); color: var(--text); }
+
+  /* toolbar */
+  #toolbar { display: flex; align-items: center; gap: 2px; padding: 4px 8px; background: var(--toolbar); }
+  .tb {
+    width: 28px; height: 28px; border-radius: 999px; flex: 0 0 auto;
+    display: flex; align-items: center; justify-content: center; color: var(--btn-fg);
+  }
+  .tb:hover:not(:disabled) { background: var(--btn-hover); color: var(--text); }
+  #urlwrap { flex: 1; min-width: 0; margin: 0 6px; position: relative; display: flex; align-items: center; }
+  #urlicon {
+    position: absolute; left: 16px; color: var(--btn-fg);
+    display: flex; align-items: center; pointer-events: none;
+  }
+  #omnibox {
+    width: 100%; min-height: 30px; padding: 8px 16px 8px 38px;
+    font-size: 14px; font-family: inherit;
+    background: var(--url-bg); color: var(--url-fg);
+    border: 1px solid transparent; border-radius: 999px; outline: none;
+    caret-color: var(--url-border);
+  }
+  #omnibox::placeholder { color: var(--btn-fg); }
+  #omnibox:focus {
+    background: var(--url-focus-bg); border-color: var(--url-border);
+    box-shadow: 0 1px 6px var(--shadow);
+  }
+  #avatar {
+    width: 30px; height: 30px; border-radius: 999px; margin: 0 4px;
+    background: #1a73e8; color: #fff; font-size: 13px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center; flex: 0 0 auto;
+  }
+  #avatar:hover { box-shadow: 0 0 0 2px rgba(26,115,232,.35); }
+  #star.on { color: #f9ab00; }
+
+  /* the 2px progress line the GTK build draws above the page */
+  #progress { height: 2px; background: transparent; overflow: hidden; }
+  #progress.on { background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: .25 } 50% { opacity: 1 } }
+
+  /* bookmarks bar */
+  #bookmarks { display: flex; align-items: center; padding: 0 6px 4px; background: var(--toolbar); }
+  #bookmarks.hidden, #findbar.hidden, .hidden { display: none !important; }
+  .bm {
+    display: flex; align-items: center; gap: 6px; max-width: 200px;
+    padding: 4px 8px; border-radius: 4px; color: var(--bm-fg); font-size: 12px;
+  }
+  .bm:hover { background: var(--bm-hover); }
+  .bm span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* find bar */
+  #findbar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 4px 10px; background: var(--toolbar);
+    border-top: 1px solid var(--sep);
+  }
+  #findinput {
+    width: 26ch; min-height: 26px; padding: 3px 10px;
+    font-family: inherit; font-size: 13px;
+    background: var(--url-bg); color: var(--url-fg);
+    border: 1px solid transparent; border-radius: 999px; outline: none;
+  }
+  #findinput:focus { border-color: var(--url-border); }
+  #findcount { color: var(--btn-fg); min-width: 46px; font-variant-numeric: tabular-nums; }
+  .fb {
+    width: 24px; height: 24px; border-radius: 999px;
+    display: flex; align-items: center; justify-content: center; color: var(--btn-fg);
+  }
+  .fb:hover { background: var(--btn-hover); color: var(--text); }
+
+  /* overlays */
+  #scrim { position: fixed; inset: 0; display: none; }
+  #scrim.show { display: block; }
+  .panel {
+    position: fixed; z-index: 20; background: var(--menu-bg);
+    border: 1px solid var(--sep); border-radius: 10px;
+    box-shadow: 0 8px 28px rgba(0,0,0,.35); overflow: hidden;
+  }
+  #menu { top: 74px; right: 8px; width: 300px; padding: 6px 0; }
+  .item {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    width: 100%; padding: 7px 16px; text-align: left;
+    font-size: 13px; color: var(--menu-fg);
+  }
+  .item:hover { background: var(--menu-hover); }
+  .item .key { color: var(--btn-fg); font-size: 11px; }
+  .sep { height: 1px; background: var(--sep); margin: 6px 0; }
+
+  #panel-settings { top: 74px; right: 8px; width: 420px; max-height: 72vh; overflow: auto; }
+  .panel-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 18px 8px; font-size: 15px; font-weight: 600; color: var(--menu-fg);
+  }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 18px; font-size: 13px; }
+  .row .label { color: var(--menu-fg); }
+  .row .hint { color: var(--btn-fg); font-size: 11px; margin-top: 2px; }
+  .row select {
+    background: var(--url-bg); color: var(--url-fg); border: 1px solid var(--sep);
+    border-radius: 6px; padding: 4px 8px; font: inherit;
+  }
+  .toggle { width: 38px; height: 22px; border-radius: 11px; background: var(--sep); position: relative; flex: 0 0 auto; }
+  .toggle::after {
+    content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px;
+    border-radius: 50%; background: #fff; transition: transform .15s;
+  }
+  .toggle.on { background: var(--accent); }
+  .toggle.on::after { transform: translateX(16px); }
+  .link { color: var(--accent); text-decoration: underline; font-size: 12px; }
+
+  #panel-downloads { top: 74px; right: 8px; width: 420px; max-height: 70vh; overflow: auto; }
+  #panel-closed { top: 74px; right: 8px; width: 460px; max-height: 70vh; overflow: auto; }
+  #tabsearch { top: 74px; left: 50%; transform: translateX(-50%); width: 540px; }
+  .dl { display: flex; align-items: center; gap: 10px; padding: 10px 18px; border-top: 1px solid var(--sep); font-size: 12px; color: var(--menu-fg); }
+  .dl .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dl .meta { color: var(--btn-fg); font-variant-numeric: tabular-nums; }
+  .empty { padding: 16px 18px; color: var(--btn-fg); font-size: 12px; }
+
+  #toast {
+    position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+    background: #202124; color: #e8eaed; padding: 9px 16px; border-radius: 8px;
+    font-size: 12px; z-index: 40; box-shadow: 0 6px 20px rgba(0,0,0,.35);
+  }
+  html.dark #toast { background: #e8eaed; color: #202124; }
+</style>
+</head>
+<body>
+<div id="chrome">
+  <div id="headerbar">
+    <div id="tabs"></div>
+    <button id="newtab" title="New tab (Ctrl+T)" aria-label="New tab">+</button>
+  </div>
+
+  <div id="toolbar">
+    <button class="tb" id="back" title="Back (Alt+Left)" aria-label="Back">
+      <svg width="16" height="16" viewBox="0 0 16 16"><path d="M10 3L5 8l5 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <button class="tb" id="forward" title="Forward (Alt+Right)" aria-label="Forward">
+      <svg width="16" height="16" viewBox="0 0 16 16"><path d="M6 3l5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <button class="tb" id="reload" title="Reload (Ctrl+R)" aria-label="Reload">
+      <svg width="16" height="16" viewBox="0 0 16 16"><path d="M13 8a5 5 0 1 1-1.6-3.7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M13 2.6v2.9H10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+
+    <div id="urlwrap">
+      <span id="urlicon">
+        <svg id="icon-lock" width="12" height="12" viewBox="0 0 12 12"><path d="M3 5V3.6a3 3 0 0 1 6 0V5" fill="none" stroke="currentColor" stroke-width="1.2"/><rect x="2" y="5" width="8" height="5.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+        <svg id="icon-search" class="hidden" width="12" height="12" viewBox="0 0 12 12"><circle cx="5.2" cy="5.2" r="3.4" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M7.8 7.8L10.5 10.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+      </span>
+      <input id="omnibox" placeholder="Search Google or type a URL" spellcheck="false" autocomplete="off" aria-label="Address and search bar">
+    </div>
+
+    <button class="tb" id="star" title="Bookmark this tab (Ctrl+D)" aria-label="Bookmark">
+      <svg width="16" height="16" viewBox="0 0 16 16"><path d="M8 2.6l1.7 3.4 3.8.6-2.7 2.7.6 3.7L8 11.3l-3.4 1.7.6-3.7L2.5 6.6l3.8-.6z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+    </button>
+    <button id="avatar" title="RustChrome" aria-label="Profile">T</button>
+    <button class="tb" id="menu-btn" title="Customise and control RustChrome" aria-label="Menu">
+      <svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="3" r="1.35" fill="currentColor"/><circle cx="8" cy="8" r="1.35" fill="currentColor"/><circle cx="8" cy="13" r="1.35" fill="currentColor"/></svg>
+    </button>
+  </div>
+
+  <div id="bookmarks"></div>
+
+  <div id="findbar" class="hidden">
+    <input id="findinput" placeholder="Find in page" aria-label="Find in page">
+    <span id="findcount">0/0</span>
+    <button class="fb" id="findprev" title="Previous (Shift+Enter)">↑</button>
+    <button class="fb" id="findnext" title="Next (Enter)">↓</button>
+    <button class="fb" id="findclose" title="Close (Esc)">✕</button>
+  </div>
+
+  <div id="progress"></div>
+</div>
+
+<div id="scrim"></div>
+
+<div id="menu" class="panel hidden">
+  <button class="item" data-act="newtab"><span>New tab</span><span class="key">Ctrl+T</span></button>
+  <button class="item" data-act="reopen"><span>Reopen closed tab</span><span class="key">Ctrl+Shift+T</span></button>
+  <button class="item" data-act="closed"><span>Recently closed…</span></button>
+  <button class="item" data-act="tabsearch"><span>Search tabs…</span><span class="key">Ctrl+Shift+A</span></button>
+  <div class="sep"></div>
+  <button class="item" data-act="find"><span>Find in page…</span><span class="key">Ctrl+F</span></button>
+  <div class="sep"></div>
+  <button class="item" data-act="zin"><span>Zoom in</span><span class="key">Ctrl++</span></button>
+  <button class="item" data-act="zout"><span>Zoom out</span><span class="key">Ctrl+-</span></button>
+  <button class="item" data-act="zreset"><span>Reset zoom</span><span class="key" id="zoomlabel">(100%)</span></button>
+  <div class="sep"></div>
+  <button class="item" data-act="downloads-folder"><span>Downloads folder</span></button>
+  <button class="item" data-act="page-bookmarks"><span>Bookmarks</span></button>
+  <button class="item" data-act="page-extensions"><span>Extensions</span></button>
+  <button class="item" data-act="page-privacy"><span>Privacy</span></button>
+  <button class="item" data-act="downloads"><span>Downloads</span><span class="key" id="dlcount"></span></button>
+  <div class="sep"></div>
+  <button class="item" data-act="newidentity"><span>New identity (clear cookies + site data)</span></button>
+  <button class="item" data-act="clear-on-exit"><span id="clearlabel">Clear data on exit: on</span></button>
+  <div class="sep"></div>
+  <button class="item" data-act="antifp"><span id="fplabel">Anti-fingerprinting: on</span></button>
+  <button class="item" data-act="forcedark"><span id="fdlabels">Force dark pages: off</span></button>
+  <button class="item" data-act="theme"><span id="themelabel">Dark mode</span></button>
+  <div class="sep"></div>
+  <button class="item" data-act="settings"><span>Settings…</span></button>
+  <button class="item" data-act="quit"><span>Quit</span><span class="key">Ctrl+Q</span></button>
+</div>
+
+<div id="panel-settings" class="panel hidden">
+  <div class="panel-head"><span>Settings</span><button class="fb" data-close="panel-settings">✕</button></div>
+
+  <div class="row">
+    <div><div class="label">Search engine</div><div class="hint">Used by the address bar and the new tab page</div></div>
+    <select id="engine"></select>
+  </div>
+
+  <div class="row">
+    <div><div class="label">Strict mode</div><div class="hint">Deny WebGL and remove WebRTC entirely. Breaks some sites; off by default.</div></div>
+    <button class="toggle" data-pref="strict"></button>
+  </div>
+
+  <div class="row">
+    <div><div class="label">Userscripts</div><div class="hint" id="us-dir">—</div></div>
+    <div style="display:flex;gap:10px">
+      <button class="link" data-act="openuserscripts">Open folder</button>
+      <button class="link" data-act="reloaduserscripts">Reload</button>
+    </div>
+  </div>
+
+  <div class="row">
+    <div><div class="label">Session</div><div class="hint">Private keeps nothing on disk; Standard keeps cookies and logins between launches (new tabs)</div></div>
+    <select id="session-mode">
+      <option value="private">Private</option>
+      <option value="standard">Standard</option>
+    </select>
+  </div>
+
+  <div class="row">
+    <div><div class="label">Restore tabs after a crash</div><div class="hint">A clean exit closes them; only a crash brings them back</div></div>
+    <button class="toggle" data-pref="restore_session"></button>
+  </div>
+
+  <div class="row">
+    <div><div class="label">Bookmarks</div><div class="hint">Import Chrome's profile directly, or any Chrome/Firefox HTML export</div></div>
+    <div style="display:flex;gap:8px"><button class="link" id="bm-export">Export</button></div>
+  </div>
+  <div class="row">
+    <input id="bm-path" placeholder="Chrome profile (auto) or path to .html / Bookmarks"
+           style="flex:1;min-width:0;padding:5px 8px;font:inherit;background:var(--url-bg);color:var(--url-fg);border:1px solid var(--sep);border-radius:6px">
+    <button class="link" id="bm-import">Import</button>
+  </div>
+
+  <div class="row">
+    <div><div class="label">Site rules</div><div class="hint">Everything is denied unless a rule allows it for that host</div></div>
+  </div>
+  <div class="row">
+    <input id="rule-host" placeholder="host, e.g. meet.example.com"
+           style="flex:1;min-width:0;padding:5px 8px;font:inherit;background:var(--url-bg);color:var(--url-fg);border:1px solid var(--sep);border-radius:6px">
+    <select id="rule-kind">
+      <option>camera</option><option>microphone</option><option>geolocation</option>
+      <option>notifications</option><option>clipboard</option><option>sensors</option>
+      <option>autoplay</option>
+    </select>
+    <select id="rule-allow"><option value="1">Allow</option><option value="0">Deny</option></select>
+    <button class="link" id="rule-add">Add</button>
+  </div>
+  <div id="rule-list"></div>
+
+  <div class="row">
+    <div><div class="label">Search engines</div><div class="hint">Template must contain {q}</div></div>
+  </div>
+  <div class="row">
+    <input id="eng-label" placeholder="Name" style="width:120px;padding:5px 8px;font:inherit;background:var(--url-bg);color:var(--url-fg);border:1px solid var(--sep);border-radius:6px">
+    <input id="eng-template" placeholder="https://example.com/search?q={q}"
+           style="flex:1;min-width:0;padding:5px 8px;font:inherit;background:var(--url-bg);color:var(--url-fg);border:1px solid var(--sep);border-radius:6px">
+    <button class="link" id="eng-add">Add</button>
+  </div>
+  <div id="eng-list"></div>
+
+  <div class="row">
+    <div><div class="label">Downloads folder</div><div class="hint" id="dl-dir">—</div></div>
+    <button class="link" data-act="downloads-folder">Open folder</button>
+  </div>
+
+  <div class="sep"></div>
+  <div class="row"><div><div class="label">RustChrome</div><div class="hint" id="about">—</div></div></div>
+</div>
+
+<div id="panel-closed" class="panel hidden">
+  <div class="panel-head"><span>Recently closed</span><button class="fb" data-close="panel-closed">✕</button></div>
+  <div id="closed-list"></div>
+  <div class="row"><button class="link" data-act="clearsession">Clear list</button></div>
+</div>
+
+<div id="tabsearch" class="panel hidden">
+  <div style="padding:12px 14px">
+    <input id="ts-input" placeholder="Search tabs by title or address" spellcheck="false"
+           style="width:100%;min-height:32px;padding:6px 12px;font:inherit;font-size:14px;
+                  background:var(--url-bg);color:var(--url-fg);border:1px solid var(--url-border);
+                  border-radius:999px;outline:none">
+  </div>
+  <div id="ts-results" style="max-height:50vh;overflow:auto"></div>
+</div>
+
+<div id="panel-downloads" class="panel hidden">
+  <div class="panel-head"><span>Downloads</span><button class="fb" data-close="panel-downloads">✕</button></div>
+  <div id="dl-list"></div>
+</div>
+
+<div id="toast" class="hidden"></div>
+
+<script>
+(() => {
+  "use strict";
+
+  const $ = (id) => document.getElementById(id);
+  const bridge = window.chrome && window.chrome.webview;
+  const post = (obj) => { try { bridge && bridge.postMessage(obj); } catch (e) {} };
+
+  let state = null;
+  let lastHeight = 0;
+  let lastDl = {};
+  let lastNotice = null;
+  let menuOpen = false;
+  let tsSel = 0;
+
+  const ICON_FOLDER =
+    '<svg width="14" height="14" viewBox="0 0 16 16"><path d="M1.5 4.2A1.2 1.2 0 0 1 2.7 3h3.1l1.3 1.5h5.9a1.2 1.2 0 0 1 1.2 1.2v6.1a1.2 1.2 0 0 1-1.2 1.2H2.7a1.2 1.2 0 0 1-1.2-1.2z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>';
+
+  function render(s) {
+    state = s;
+    document.documentElement.classList.toggle("dark", s.prefs.theme === "dark");
+
+    const tabs = $("tabs");
+    tabs.textContent = "";
+    for (const t of s.tabs) {
+      const el = document.createElement("div");
+      el.className = "tab" + (t.active ? " active" : "");
+      el.dataset.id = t.id;
+
+      if (t.loading) {
+        const sp = document.createElement("div");
+        sp.className = "spinner";
+        el.appendChild(sp);
+      }
+      const title = document.createElement("span");
+      title.className = "title";
+      title.textContent = t.title;
+      el.appendChild(title);
+
+      const close = document.createElement("button");
+      close.className = "close";
+      close.setAttribute("aria-label", "Close tab");
+      close.textContent = "✕";
+      close.addEventListener("click", (e) => { e.stopPropagation(); post({ cmd: "closetab", id: t.id }); });
+      el.appendChild(close);
+
+      el.addEventListener("click", () => post({ cmd: "activate", id: t.id }));
+      el.addEventListener("auxclick", (e) => { if (e.button === 1) post({ cmd: "closetab", id: t.id }); });
+      tabs.appendChild(el);
+    }
+    const activeTab = tabs.querySelector(".tab.active");
+    if (activeTab) activeTab.scrollIntoView({ block: "nearest", inline: "nearest" });
+
+    const box = $("omnibox");
+    // Internal pages are data: URLs; showing that base64 in the omnibox is
+    // noise. The address bar shows a URL only for real pages.
+    const shown = s.url && !s.url.startsWith("data:") ? s.url : "";
+    if (document.activeElement !== box && box.value !== shown) box.value = shown;
+    box.placeholder = "Search " + s.engine_label + " or type a URL";
+    const secure = s.url.indexOf("https://") === 0;
+    $("icon-lock").classList.toggle("hidden", !secure);
+    $("icon-search").classList.toggle("hidden", secure);
+
+    $("back").disabled = !s.can_back;
+    $("forward").disabled = !s.can_forward;
+    $("star").classList.toggle("on", !!s.bookmarked);
+    $("zoomlabel").textContent = "(" + Math.round(s.prefs.zoom * 100) + "%)";
+    $("clearlabel").textContent = "Clear data on exit: " + (s.prefs.keep_session ? "off" : "on");
+    $("fplabel").textContent = "Anti-fingerprinting: " + (s.prefs.antifp ? "on" : "off");
+    $("fdlabels").textContent = "Force dark pages: " + (s.prefs.force_dark ? "on" : "off");
+    $("themelabel").textContent = s.prefs.theme === "dark" ? "Light mode" : "Dark mode";
+    $("progress").classList.toggle("on", !!s.loading);
+
+    const bar = $("bookmarks");
+    bar.textContent = "";
+    if (!s.prefs.show_bookmarks || s.bookmarks.length === 0) {
+      bar.classList.add("hidden");
+    } else {
+      bar.classList.remove("hidden");
+      for (const b of s.bookmarks.slice(0, 14)) {
+        const el = document.createElement("button");
+        el.className = "bm";
+        el.title = b.url;
+        el.innerHTML = ICON_FOLDER;
+        const label = document.createElement("span");
+        label.textContent = b.title || b.url;
+        el.appendChild(label);
+        el.addEventListener("click", () => post({ cmd: "navigate", text: b.url }));
+        bar.appendChild(el);
+      }
+    }
+
+    const fb = $("findbar");
+    fb.classList.toggle("hidden", !s.find.open);
+    if (s.find.open) $("findcount").textContent = (s.find.index || 0) + "/" + (s.find.count || 0);
+
+    const sel = $("engine");
+    if (sel.options.length !== s.engines.length) {
+      sel.textContent = "";
+      for (const e of s.engines) {
+        const o = document.createElement("option");
+        o.value = e.id;
+        o.textContent = e.label;
+        sel.appendChild(o);
+      }
+    }
+    if (sel.value !== s.prefs.engine) sel.value = s.prefs.engine;
+    $("us-dir").textContent = s.userscripts_dir;
+    $("dl-dir").textContent = s.downloads_dir;
+    $("about").textContent = "v" + s.version + " · WebView2 " + s.runtime;
+
+    // session mode
+    const sm = $("session-mode");
+    const want = s.prefs.keep_session ? "standard" : "private";
+    if (sm.value !== want) sm.value = want;
+
+    // recently closed
+    const cl = $("closed-list");
+    cl.textContent = "";
+    if (!s.closed || !s.closed.length) {
+      const e = document.createElement("div");
+      e.className = "empty";
+      e.textContent = "Nothing closed yet.";
+      cl.appendChild(e);
+    } else {
+      s.closed.forEach((c, i) => {
+        const b = document.createElement("button");
+        b.className = "item";
+        b.textContent = c.url;
+        b.addEventListener("click", () => { post({ cmd: "reopenat", index: i }); closePanels(); });
+        cl.appendChild(b);
+      });
+    }
+
+    // tab search results
+    if (s.tabsearch && s.tabsearch.open) renderTabSearch(s.tabsearch);
+
+    // site rules
+    const rl = $("rule-list");
+    rl.textContent = "";
+    (s.site_rules || []).forEach((r, i) => {
+      const row = document.createElement("div");
+      row.className = "row";
+      const t = document.createElement("div");
+      t.textContent = (r.allow ? "Allow " : "Deny ") + r.kind + " — " + r.host;
+      const x = document.createElement("button");
+      x.className = "link";
+      x.textContent = "Remove";
+      x.addEventListener("click", () => post({ cmd: "removerule", index: i }));
+      row.appendChild(t);
+      row.appendChild(x);
+      rl.appendChild(row);
+    });
+
+    // custom search engines
+    const el = $("eng-list");
+    el.textContent = "";
+    (s.custom_engines || []).forEach((e, i) => {
+      const row = document.createElement("div");
+      row.className = "row";
+      const t = document.createElement("div");
+      t.textContent = e.label;
+      const x = document.createElement("button");
+      x.className = "link";
+      x.textContent = "Remove";
+      x.addEventListener("click", () => post({ cmd: "removeengine", index: i }));
+      row.appendChild(t);
+      row.appendChild(x);
+      el.appendChild(row);
+    });
+
+    if (s.notice && s.notice !== lastNotice) {
+      lastNotice = s.notice;
+      toast(s.notice);
+    }
+
+    renderDownloads(s.downloads);
+    reportHeight();
+  }
+
+  function renderTabSearch(ts) {
+    const box = $("ts-results");
+    box.textContent = "";
+    if (!ts.hits.length) {
+      const e = document.createElement("div");
+      e.className = "empty";
+      e.textContent = "No matching tabs.";
+      box.appendChild(e);
+      return;
+    }
+    ts.hits.forEach((h, i) => {
+      const b = document.createElement("button");
+      b.className = "item";
+      if (i === tsSel) b.style.background = "var(--menu-hover)";
+      const t = document.createElement("span");
+      t.textContent = h.title;
+      const u = document.createElement("span");
+      u.className = "key";
+      u.textContent = h.url.replace(/^https?:\/\//, "").slice(0, 42);
+      b.appendChild(t);
+      b.appendChild(u);
+      b.addEventListener("click", () => post({ cmd: "tabsearchpick", index: i }));
+      box.appendChild(b);
+    });
+    const cur = box.children[tsSel];
+    if (cur) cur.scrollIntoView({ block: "nearest" });
+  }
+
+  function renderDownloads(list) {
+    $("dlcount").textContent = list.length ? String(list.length) : "";
+    const box = $("dl-list");
+    box.textContent = "";
+    if (!list.length) {
+      const e = document.createElement("div");
+      e.className = "empty";
+      e.textContent = "No downloads yet.";
+      box.appendChild(e);
+      return;
+    }
+    for (const d of list) {
+      const row = document.createElement("div");
+      row.className = "dl";
+      const name = document.createElement("div");
+      name.className = "name";
+      name.textContent = d.name;
+      name.title = d.path;
+      row.appendChild(name);
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      if (d.state === "completed") meta.textContent = "Done";
+      else if (d.state === "interrupted") meta.textContent = "Failed";
+      else if (d.total > 0) meta.textContent = Math.round((d.received / d.total) * 100) + "%";
+      else meta.textContent = "…";
+      row.appendChild(meta);
+      if (d.state === "progressing") {
+        const c = document.createElement("button");
+        c.className = "link";
+        c.textContent = "Cancel";
+        c.addEventListener("click", () => post({ cmd: "canceldownload", id: d.id }));
+        row.appendChild(c);
+      }
+
+      if (d.state === "completed") {
+        const b = document.createElement("button");
+        b.className = "link";
+        b.textContent = "Show";
+        b.addEventListener("click", () => post({ cmd: "reveal", id: d.id }));
+        row.appendChild(b);
+      }
+      box.appendChild(row);
+      const prev = lastDl[d.id];
+      if (prev && prev !== d.state && d.state === "completed") toast("Downloaded " + d.name);
+      lastDl[d.id] = d.state;
+    }
+  }
+
+  let toastTimer = null;
+  function toast(text) {
+    const t = $("toast");
+    t.textContent = text;
+    t.classList.remove("hidden");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.add("hidden"), 3200);
+  }
+
+  function reportHeight() {
+    const el = $("chrome");
+    if (!el) return;
+    const h = Math.ceil(el.getBoundingClientRect().height);
+    if (h > 0 && Math.abs(h - lastHeight) >= 1) { lastHeight = h; post({ cmd: "height", height: h }); }
+  }
+  if (window.ResizeObserver) new ResizeObserver(reportHeight).observe($("chrome"));
+
+  function closePanels() {
+    for (const id of ["menu", "panel-settings", "panel-downloads", "panel-closed", "tabsearch"]) $(id).classList.add("hidden");
+    $("scrim").classList.remove("show");
+    menuOpen = false;
+  }
+  function openPanel(id) {
+    closePanels();
+    $(id).classList.remove("hidden");
+    $("scrim").classList.add("show");
+  }
+  $("scrim").addEventListener("click", closePanels);
+  $("menu-btn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (menuOpen) closePanels(); else { openPanel("menu"); menuOpen = true; }
+  });
+  $("avatar").addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (menuOpen) closePanels(); else { openPanel("menu"); menuOpen = true; }
+  });
+  for (const b of document.querySelectorAll("[data-close]")) b.addEventListener("click", closePanels);
+
+  $("newtab").addEventListener("click", () => post({ cmd: "newtab" }));
+  $("back").addEventListener("click", () => post({ cmd: "back" }));
+  $("forward").addEventListener("click", () => post({ cmd: "forward" }));
+  $("reload").addEventListener("click", () => post({ cmd: state && state.loading ? "stop" : "reload" }));
+  $("star").addEventListener("click", () => post({ cmd: "bookmark" }));
+
+  const box = $("omnibox");
+  box.addEventListener("focus", () => box.select());
+  box.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      const text = box.value.trim();
+      if (text) post({ cmd: "navigate", text });
+      box.blur();
+      e.preventDefault();
+    } else if (e.key === "Escape") {
+      box.value = state ? state.url : "";
+      box.blur();
+      e.preventDefault();
+    }
+  });
+
+  const menuActions = {
+    newtab: () => post({ cmd: "newtab" }),
+    reopen: () => post({ cmd: "reopen" }),
+    closed: () => openPanel("panel-closed"),
+    clearsession: () => post({ cmd: "clearsession" }),
+    tabsearch: () => openTabSearch(),
+    find: () => openFind(),
+    zin: () => post({ cmd: "zoom", value: 0.1 }),
+    zout: () => post({ cmd: "zoom", value: -0.1 }),
+    zreset: () => post({ cmd: "zoomreset" }),
+    "downloads-folder": () => post({ cmd: "openfolder", which: "downloads" }),
+    "page-bookmarks": () => post({ cmd: "page", which: "bookmarks" }),
+    "page-extensions": () => post({ cmd: "page", which: "extensions" }),
+    "page-privacy": () => post({ cmd: "page", which: "privacy" }),
+    downloads: () => openPanel("panel-downloads"),
+    newidentity: () => { if (confirm("Clear cookies and site data and close every tab?")) post({ cmd: "newidentity" }); },
+    "clear-on-exit": () => post({ cmd: "setpref", key: "keep_session", value: !state.prefs.keep_session }),
+    antifp: () => post({ cmd: "setpref", key: "antifp", value: !state.prefs.antifp }),
+    forcedark: () => post({ cmd: "setpref", key: "force_dark", value: !state.prefs.force_dark }),
+    theme: () => post({ cmd: "setpref", key: "theme", value: state.prefs.theme === "dark" ? "light" : "dark" }),
+    settings: () => openPanel("panel-settings"),
+    quit: () => post({ cmd: "quit" })
+  };
+
+  for (const item of document.querySelectorAll("#menu .item")) {
+    item.addEventListener("click", () => {
+      const act = item.dataset.act;
+      const fn = menuActions[act];
+      if (fn) fn();
+      if (act !== "downloads" && act !== "settings") closePanels();
+    });
+  }
+  for (const b of document.querySelectorAll("[data-act]")) {
+    if (b.closest("#menu")) continue;
+    b.addEventListener("click", () => post({ cmd: b.dataset.act }));
+  }
+
+  $("engine").addEventListener("change", (e) => post({ cmd: "setpref", key: "engine", value: e.target.value }));
+
+  function openTabSearch() {
+    tsSel = 0;
+    post({ cmd: "tabsearch", text: "" });
+    openPanel("tabsearch");
+    setTimeout(() => { $("ts-input").focus(); $("ts-input").select(); }, 0);
+  }
+
+  const tsInput = $("ts-input");
+  tsInput.addEventListener("input", () => {
+    tsSel = 0;
+    post({ cmd: "tabsearch", text: tsInput.value });
+  });
+  tsInput.addEventListener("keydown", (e) => {
+    const n = state && state.tabsearch ? state.tabsearch.hits.length : 0;
+    if (e.key === "ArrowDown") { tsSel = Math.min(tsSel + 1, Math.max(0, n - 1)); post({ cmd: "tabsearch", text: tsInput.value }); e.preventDefault(); }
+    else if (e.key === "ArrowUp") { tsSel = Math.max(0, tsSel - 1); post({ cmd: "tabsearch", text: tsInput.value }); e.preventDefault(); }
+    else if (e.key === "Enter") { post({ cmd: "tabsearchpick", index: tsSel }); closePanels(); e.preventDefault(); }
+    else if (e.key === "Escape") { post({ cmd: "tabsearchclose" }); closePanels(); e.preventDefault(); }
+  });
+
+  $("bm-import").addEventListener("click", () => post({ cmd: "importbookmarks", text: $("bm-path").value }));
+  $("bm-export").addEventListener("click", () => post({ cmd: "exportbookmarks" }));
+  $("rule-add").addEventListener("click", () => post({
+    cmd: "addrule",
+    text: $("rule-host").value,
+    kind: $("rule-kind").value,
+    allow: $("rule-allow").value === "1"
+  }));
+  $("eng-add").addEventListener("click", () => post({
+    cmd: "addengine",
+    label: $("eng-label").value,
+    template: $("eng-template").value
+  }));
+  $("session-mode").addEventListener("change", (e) => {
+    post({ cmd: "setpref", key: "keep_session", value: e.target.value === "standard" });
+  });
+
+  function openFind() {
+    if (!state) return;
+    post({ cmd: "findopen" });
+    setTimeout(() => { $("findinput").focus(); $("findinput").select(); }, 0);
+  }
+  let findTimer = null;
+  const findInput = $("findinput");
+  findInput.addEventListener("input", () => {
+    clearTimeout(findTimer);
+    const text = findInput.value;
+    findTimer = setTimeout(() => post({ cmd: "find", text }), 140);
+  });
+  findInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { post({ cmd: "find", text: findInput.value, back: e.shiftKey }); e.preventDefault(); }
+    else if (e.key === "Escape") { post({ cmd: "findclose" }); e.preventDefault(); }
+  });
+  $("findnext").addEventListener("click", () => post({ cmd: "find", text: findInput.value }));
+  $("findprev").addEventListener("click", () => post({ cmd: "find", text: findInput.value, back: true }));
+  $("findclose").addEventListener("click", () => post({ cmd: "findclose" }));
+
+  document.addEventListener("keydown", (e) => {
+    const ctrl = e.ctrlKey || e.metaKey;
+    const k = e.key.toLowerCase();
+    if (e.key === "Escape" && menuOpen) { closePanels(); e.preventDefault(); return; }
+    if (ctrl && k === "t" && !e.shiftKey) { post({ cmd: "newtab" }); e.preventDefault(); return; }
+    if (ctrl && k === "t" && e.shiftKey) { post({ cmd: "reopen" }); e.preventDefault(); return; }
+    if (ctrl && k === "a" && e.shiftKey) { openTabSearch(); e.preventDefault(); return; }
+    if (ctrl && k === "w") { const t = state && state.tabs.find(x => x.active); post({ cmd: "closetab", id: t && t.id }); e.preventDefault(); return; }
+    if (ctrl && k === "l") { box.focus(); box.select(); e.preventDefault(); return; }
+    if (ctrl && k === "r") { post({ cmd: "reload" }); e.preventDefault(); return; }
+    if (ctrl && k === "f") { openFind(); e.preventDefault(); return; }
+    if (ctrl && k === "d") { post({ cmd: "bookmark" }); e.preventDefault(); return; }
+    if (ctrl && k === "q") { post({ cmd: "quit" }); e.preventDefault(); return; }
+    if (ctrl && (e.key === "+" || e.key === "=")) { post({ cmd: "zoom", value: 0.1 }); e.preventDefault(); return; }
+    if (ctrl && e.key === "-") { post({ cmd: "zoom", value: -0.1 }); e.preventDefault(); return; }
+    if (ctrl && e.key === "0") { post({ cmd: "zoomreset" }); e.preventDefault(); return; }
+  });
+
+  if (bridge) {
+    bridge.addEventListener("message", (e) => {
+      if (e.data && typeof e.data === "object" && e.data.tabs) render(e.data);
+    });
+  }
+  reportHeight();
+})();
+</script>
+</body>
+</html>

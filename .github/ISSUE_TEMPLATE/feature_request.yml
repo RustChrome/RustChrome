@@ -1,0 +1,47 @@
+name: Feature request
+description: Propose a change. Small ones are more likely to be built.
+title: "[feature] "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Read `ROADMAP.md` first — it lists what is already planned and what is
+        deliberately not planned (accounts, sync, telemetry, a Web Store).
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the situation you are in, not the button you want.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like RustChrome to do?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What do you do today instead?
+      description: Another browser, an extension, a userscript, nothing.
+  - type: dropdown
+    id: cost
+    attributes:
+      label: Does this cost anything?
+      options:
+        - It is pure UI or logic, no new dependency
+        - It needs a new dependency
+        - It needs a new engine capability
+        - It needs a network service
+        - Not sure
+    validations:
+      required: true
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Constraints this must respect
+      options:
+        - label: It adds no telemetry and no new network traffic at startup.
+          required: true

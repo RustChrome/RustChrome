@@ -1,0 +1,97 @@
+name: Bug report
+description: Something is broken. Thanks — this is the most useful thing you can send.
+title: "[bug] "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        RustChrome has no telemetry and no crash reporting. Everything below is
+        information only you can give us.
+
+        Please do **not** paste passwords, cookies, session tokens or private
+        page contents. A URL that reproduces the problem is usually enough.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The archive name, the release tag, or the output of `rustchrome --version` if your build has it.
+      placeholder: "0.2.0, rustchrome-0.2.0-x86_64-windows.zip"
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Windows 11
+        - Windows 10
+        - Linux (GTK3 / WebKitGTK 4.1)
+        - Other (say which below)
+    validations:
+      required: true
+  - type: input
+    id: distro
+    attributes:
+      label: Distribution / WebView2 runtime version
+      description: On Linux, your distro and WebKitGTK version. On Windows, the WebView2 runtime version if you know it.
+      placeholder: "Arch, webkit2gtk-4.1 2.48 / WebView2 131.0.2903.86"
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Numbered steps. "Open example.com, press Ctrl+F, type x" beats "search is broken".
+      placeholder: |
+        1. Open https://example.com
+        2. Press Ctrl+F
+        3. Type "domain"
+        4. Nothing is highlighted
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What actually happened
+    validations:
+      required: true
+  - type: input
+    id: site
+    attributes:
+      label: Site that triggers it
+      description: If it is site-specific, the URL. If it is private, say "private" and skip it.
+  - type: dropdown
+    id: other_browsers
+    attributes:
+      label: Does it also happen in Firefox or Chrome?
+      description: This separates our bug from the site's bug.
+      options:
+        - Not tried
+        - No, only RustChrome
+        - Yes, in both
+        - It is RustChrome-specific UI, not a page
+  - type: textarea
+    id: logs
+    attributes:
+      label: Console output
+      description: |
+        Run from a terminal to see stderr:
+        Linux — `./rustchrome 2> log.txt`
+        Windows — `.\rustchrome.exe 2> log.txt` in PowerShell
+      render: shell
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Confirmations
+      options:
+        - label: I am running an official build or a build from this repository, not a modified one.
+          required: true
+        - label: I removed passwords, tokens and private data from anything I pasted.
+          required: true
+        - label: I checked `docs/QA.md` to see whether this is already a known bug.
+          required: false

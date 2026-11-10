@@ -1,9 +1,20 @@
+[workspace]
+# The Windows shell and the shared core are workspace members. This directory
+# stays the workspace root package, so `cargo build --release` here still
+# produces target/release/rustchrome exactly as before — the Linux release path
+# is unchanged.
+members = ["crates/rc-core", "crates/rc-windows"]
+resolver = "2"
+
 [package]
 name = "rustchrome"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
+license = "MIT"
+description = "A small, privacy-first browser: GTK3 + WebKitGTK on Linux, Win32 + WebView2 on Windows"
 
 [dependencies]
+rc-core = { path = "crates/rc-core" }
 gtk = "0.18"
 webkit2gtk = { version = "2.0", features = ["v2_40"] }
 webkit2gtk-sys = { version = "2.0", features = ["v2_40"] }
