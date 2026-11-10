@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: ["main", "feat/windows-foundation"]
+    branches: ["main", "feat/windows-foundation", "feat/privacy-hardening"]
   pull_request:
   workflow_dispatch:
 
