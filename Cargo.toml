@@ -10,6 +10,8 @@ resolver = "2"
 name = "rustchrome"
 version = "0.2.0"
 edition = "2021"
+license = "MIT"
+description = "A small, privacy-first browser: GTK3 + WebKitGTK on Linux, Win32 + WebView2 on Windows"
 
 [dependencies]
 rc-core = { path = "crates/rc-core" }
