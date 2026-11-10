@@ -162,9 +162,10 @@ jobs:
           Copy-Item docs\WINDOWS.md dist\README-WINDOWS.md -ErrorAction SilentlyContinue
           $zip = "rustchrome-$($env:VERSION)-x86_64-windows.zip"
           Compress-Archive -Path dist\* -DestinationPath $zip -Force
-          Get-FileHash $zip -Algorithm SHA256 |
-            ForEach-Object { "$($_.Hash.ToLower())  $zip" } |
-            Out-File -Encoding ascii "$zip.sha256"
+          # WriteAllText keeps LF endings: Out-File writes CRLF, and a CRLF
+          # checksum file fails `sha256sum -c` on Linux and in git bash.
+          $sum = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          [System.IO.File]::WriteAllText("$PWD\$zip.sha256", "$sum  $zip`n")
           Get-Item $zip | Select-Object Name, Length
 
       - name: Exe details
