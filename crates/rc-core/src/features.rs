@@ -394,15 +394,10 @@ pub fn save_sites(rules: &[SiteRule]) -> std::io::Result<()> {
 
 /// Host of a URL, lowercased, without a port.
 pub fn host_of(url: &str) -> Option<String> {
-    let after_scheme = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
-    let host = after_scheme
-        .split(['/', '?', '#'])
-        .next()
-        .unwrap_or("")
-        .rsplit_once('@')
-        .map(|(_, h)| h)
-        .unwrap_or(after_scheme.split(['/', '?', '#']).next().unwrap_or(""));
-    let host = host.split(':').next().unwrap_or("");
+    let (_, rest) = url.split_once("://")?;
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host_port = authority.rsplit_once('@').map(|(_, h)| h).unwrap_or(authority);
+    let host = host_port.split(':').next().unwrap_or("");
     if host.is_empty() {
         None
     } else {

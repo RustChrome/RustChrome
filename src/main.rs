@@ -1439,7 +1439,7 @@ impl App {
         filter.add_pattern("*.html");
         filter.add_pattern("*.htm");
         filter.add_pattern("*");
-        dlg.add_filter(&filter);
+        dlg.add_filter(filter);
         let a = self.rc();
         dlg.connect_response(move |d, resp| {
             if resp == gtk::ResponseType::Accept {
@@ -1448,7 +1448,7 @@ impl App {
                         Ok(items) => {
                             let (added, skipped) = {
                                 let mut bm = a.bookmarks.borrow_mut();
-                                let r = rc_core::features::merge_bookmarks(&mut bm, items);
+                                let r = rc_core::features::merge_bookmarks(&mut *bm, items);
                                 let _ = rc_core::store::save_bookmarks(&bm);
                                 r
                             };
@@ -1468,7 +1468,8 @@ impl App {
 
     fn export_bookmarks(&self) {
         let dest = rc_core::downloads_dir().join("rustchrome-bookmarks.html");
-        let html = rc_core::features::export_netscape(&self.bookmarks.borrow());
+        let bookmarks = self.bookmarks.borrow();
+        let html = rc_core::features::export_netscape(&bookmarks);
         match std::fs::write(&dest, html) {
             Ok(()) => self.info(&format!("Exported bookmarks to {}", dest.display())),
             Err(e) => self.info(&format!("Export failed: {e}")),
