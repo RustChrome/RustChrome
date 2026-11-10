@@ -2026,6 +2026,18 @@ impl App {
             .round()
             .clamp(0.0, h as f64) as i32;
 
+        if self.smoke {
+            self.trace(&format!(
+                "relayout: client={}x{} scale={} chrome_px={} chrome_present={} ui_msgs={}",
+                w,
+                h,
+                scale,
+                chrome_px,
+                self.chrome.is_some(),
+                self.ui_msgs
+            ));
+        }
+
         if let Some(ch) = &self.chrome {
             let rect = RECT {
                 left: 0,
