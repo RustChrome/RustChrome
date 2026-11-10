@@ -274,16 +274,22 @@ impl App {
                     } else {
                         String::new()
                     };
-                    // Our own bootstrap page arrives as about:blank or a
-                    // data: URL depending on the WebView2 version. Cancelling
-                    // those left the chrome webview blank and the browser with
-                    // no tabs and no address bar.
-                    let ours = uri.is_empty()
-                        || uri == "about:blank"
-                        || uri.starts_with("data:text/html");
-                    if !ours {
-                        let _ = args.SetCancel(true);
+                    // Log what the UI actually tries to load; the browser's own
+                    // chrome is the only thing this webview may show.
+                    if let Ok(p) = std::env::var("RUSTCHROME_SMOKE_OUT") {
+                        use std::io::Write;
+                        if let Ok(mut f) = std::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(format!("{p}.log"))
+                        {
+                            let _ = writeln!(f, "ui nav: \"{}\"", uri);
+                        }
                     }
+                    // Never cancel the bootstrap load. Cancelling it produced a
+                    // window with a page and no tabs, no toolbar and no address
+                    // bar, while every WebView2 call returned success.
+                    let _ = &uri;
                 }
                 Ok(())
             }));
