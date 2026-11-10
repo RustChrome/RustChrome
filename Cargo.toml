@@ -12,6 +12,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+rc-core = { path = "crates/rc-core" }
 gtk = "0.18"
 webkit2gtk = { version = "2.0", features = ["v2_40"] }
 webkit2gtk-sys = { version = "2.0", features = ["v2_40"] }

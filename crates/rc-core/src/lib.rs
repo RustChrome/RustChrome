@@ -4,6 +4,7 @@
 //! the Win32/WebView2 shell can share the same behaviour: omnibox rules, the
 //! on-disk stores, the data directory policy and the privacy payloads.
 
+pub mod dashboard;
 pub mod privacy;
 pub mod store;
 
