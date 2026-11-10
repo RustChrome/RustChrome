@@ -11,8 +11,10 @@ use serde::{Deserialize, Serialize};
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::{Rc, Weak};
+use rc_core::privacy::{antifp_js, SessionSeed};
 use webkit2gtk::{
-    DownloadExt, FindControllerExt, LoadEvent, SettingsExt, URIRequestExt, UserContentInjectedFrames,
+    CookieAcceptPolicy, DownloadExt, FindControllerExt, LoadEvent, SettingsExt, URIRequestExt,
+    UserContentInjectedFrames, WebsiteDataManagerExt,
     NavigationPolicyDecision, NavigationPolicyDecisionExt, PolicyDecisionExt, PolicyDecisionType,
     UserContentManager,
     UserContentManagerExt, UserStyleLevel, UserStyleSheet, WebContext, WebContextExt, WebView,
@@ -87,6 +89,33 @@ const ANTI_FP_JS: &str = r#"
 })();
 "#;
 const BOOKMARKS_PAGE: &str = "about:rustchrome-bookmarks";
+const PRIVACY_PAGE: &str = "about:rustchrome-privacy";
+
+/// RUSTCHROME_PROBE=<file>: load the probe page, dump its report, exit.
+fn probe_path() -> Option<PathBuf> {
+    std::env::var_os("RUSTCHROME_PROBE").map(PathBuf::from)
+}
+
+fn finish_probe(view: &WebView, path: &PathBuf) {
+    let path = path.clone();
+    view.evaluate_javascript(
+        rc_core::privacy::PROBE_JS,
+        None,
+        None,
+        None::<&gtk::gio::Cancellable>,
+        move |res| {
+            let text = match res {
+                Ok(v) => v
+                    .to_str()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| format!("{v:?}")),
+                Err(e) => format!("FAIL {e}"),
+            };
+            let _ = std::fs::write(&path, text);
+            std::process::exit(0);
+        },
+    );
+}
 
 
 const NEW_TAB_HTML: &str = r#"<!doctype html><html><head><meta charset="utf-8"><title>New Tab</title><style>
@@ -242,9 +271,12 @@ struct App {
     theme_btn: Button,
     icon_btns: Vec<Button>,
     ucm: UserContentManager,
+    ctx: WebContext,
+    seed: Cell<SessionSeed>,
     ui_zoom: Cell<f64>,
     force_dark: Cell<bool>,
     antifp: Cell<bool>,
+    strict: Cell<bool>,
     fp_script: RefCell<Option<webkit2gtk::UserScript>>,
     dark_sheet: RefCell<Option<UserStyleSheet>>,
     dark: Cell<bool>,
@@ -383,6 +415,11 @@ fn set_pref(key: &str, val: bool) {
 
 fn load_antifp() -> bool {
     get_pref("antifp").unwrap_or(true)
+}
+
+/// Strict mode denies WebGL and removes WebRTC instead of coercing them.
+fn load_strict() -> bool {
+    get_pref("strict").unwrap_or(false)
 }
 
 fn load_dark() -> bool {
@@ -596,6 +633,17 @@ impl App {
         window.add(&root);
 
         let ucm = UserContentManager::new();
+        // Ephemeral context: cookies, cache, localStorage, IndexedDB and
+        // service workers live in memory and never reach the disk, so a crash
+        // or a kill cannot leave a session behind.
+        let ctx = WebContext::new_ephemeral();
+        ctx.set_preferred_languages(&["en-US", "en"]);
+        if let Some(cm) = ctx.cookie_manager() {
+            cm.set_accept_policy(CookieAcceptPolicy::NoThirdParty);
+        }
+        if let Some(dm) = ctx.website_data_manager() {
+            dm.set_itp_enabled(true);
+        }
         let dark_now = load_dark();
         let zoom_now = resolve_zoom(&window);
         let css_provider = install_css(&window);
@@ -614,6 +662,9 @@ impl App {
             theme_btn: theme_btn.clone(),
             icon_btns,
             ucm,
+            ctx,
+            seed: Cell::new(SessionSeed::new()),
+            strict: Cell::new(load_strict()),
             ui_zoom: Cell::new(0.0),
             force_dark: Cell::new(load_force_dark()),
             antifp: Cell::new(load_antifp()),
@@ -831,6 +882,14 @@ impl App {
     }
 
     fn startup_tabs(&self) {
+        if probe_path().is_some() {
+            let t = self.new_tab("about:blank");
+            t.view.load_html(&rc_core::privacy::probe_html(), None);
+            self.window.show_all();
+            self.progress.hide();
+            self.findbar.hide();
+            return;
+        }
         let start = std::env::var("RUSTCHROME_START_URL").unwrap_or_else(|_| HOME.to_string());
         for u in start.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
             self.new_tab(u);
@@ -894,17 +953,24 @@ impl App {
         self.tabs_box.pack_start(&tab_widget, false, false, 0);
         tab_widget.show_all();
 
-        let view = WebView::with_user_content_manager(&self.ucm);
+        let view = WebView::builder()
+            .web_context(&self.ctx)
+            .user_content_manager(&self.ucm)
+            .build();
         if let Some(s) = WebViewExt::settings(&view) {
             s.set_enable_developer_extras(false);
             s.set_javascript_can_open_windows_automatically(false);
             s.set_default_font_size(15);
             s.set_enable_smooth_scrolling(false);
-            if self.antifp.get() {
-                s.set_user_agent(Some(TOR_UA));
+            s.set_enable_dns_prefetching(false);
+            s.set_enable_hyperlink_auditing(false);
+            s.set_enable_media_stream(false);
+            if self.antifp.get() && self.strict.get() {
+                // Strict mode is the only mode that takes WebGL and WebRTC away
+                // from the engine; standard mode coerces them from script so
+                // ordinary sites keep working.
                 s.set_enable_webgl(false);
                 s.set_enable_webrtc(false);
-                s.set_enable_media_stream(false);
             }
             if let Ok(v) = std::env::var("RUSTCHROME_HWACCEL") {
                 let policy = match v.as_str() {
@@ -969,6 +1035,16 @@ impl App {
                         a.entry.set_text(&t.uri.borrow());
                     }
                     a.sync_nav();
+                }
+            });
+        }
+        {
+            let v = view.clone();
+            view.connect_load_changed(move |_, ev| {
+                if ev == LoadEvent::Finished {
+                    if let Some(path) = probe_path() {
+                        finish_probe(&v, &path);
+                    }
                 }
             });
         }
@@ -1123,6 +1199,12 @@ impl App {
             tab.view.grab_focus();
             return;
         }
+        if url == PRIVACY_PAGE {
+            tab.view.load_html(&self.privacy_html(), None);
+            self.entry.set_text(PRIVACY_PAGE);
+            tab.view.grab_focus();
+            return;
+        }
         if url == BOOKMARKS_PAGE {
             tab.view.load_html(&self.bookmarks_html(), None);
             self.entry.set_text(BOOKMARKS_PAGE);
@@ -1171,6 +1253,111 @@ impl App {
             rows,
             ext_dir().display()
         )
+    }
+
+    fn privacy_html(&self) -> String {
+        rc_core::dashboard::dashboard_html(&self.build_dashboard())
+    }
+
+    fn build_dashboard(&self) -> rc_core::dashboard::Dashboard {
+        use rc_core::dashboard::{Dashboard, Row};
+        let on = |b: bool| if b { "on" } else { "off" }.to_string();
+        let antifp = self.antifp.get();
+        let strict = self.strict.get();
+        Dashboard {
+            engine: "WebKitGTK 4.1".to_string(),
+            session_mode: "in-memory (ephemeral WebKit context, nothing written to disk)".to_string(),
+            settings: vec![
+                ("Anti-fingerprinting".to_string(), on(antifp)),
+                ("Strict mode".to_string(), on(strict)),
+                ("Theme".to_string(), if self.dark.get() { "dark" } else { "light" }.to_string()),
+            ],
+            protections: vec![
+                Row {
+                    name: "User agent".to_string(),
+                    state: "off".to_string(),
+                    note: "left as the engine reports it: overriding it to another browser would contradict the engine".to_string(),
+                },
+                Row {
+                    name: "Canvas".to_string(),
+                    state: if antifp { "partial" } else { "off" }.to_string(),
+                    note: "per-session noise: same pixels within a session, different every launch".to_string(),
+                },
+                Row {
+                    name: "WebGL".to_string(),
+                    state: if !antifp { "off" } else if strict { "on" } else { "partial" }.to_string(),
+                    note: if strict { "disabled in the engine".to_string() }
+                        else { "available, GPU vendor/renderer coerced from script".to_string() },
+                },
+                Row {
+                    name: "WebRTC".to_string(),
+                    state: if !antifp { "off" } else if strict { "on" } else { "partial" }.to_string(),
+                    note: if strict { "disabled in the engine".to_string() }
+                        else { "available; WebKitGTK has no per-candidate policy, script requests relay-only".to_string() },
+                },
+                Row {
+                    name: "Time zone".to_string(),
+                    state: on(antifp),
+                    note: "UTC in getTimezoneOffset, Intl and Date#toString".to_string(),
+                },
+                Row {
+                    name: "Languages".to_string(),
+                    state: on(antifp),
+                    note: "en-US,en in script and in Accept-Language".to_string(),
+                },
+                Row {
+                    name: "Screen size".to_string(),
+                    state: "off".to_string(),
+                    note: "reported as-is: a pinned size would contradict the real window".to_string(),
+                },
+                Row {
+                    name: "Cookies / third-party storage".to_string(),
+                    state: "on".to_string(),
+                    note: "accept policy: no third party; ITP enabled".to_string(),
+                },
+                Row {
+                    name: "Permissions".to_string(),
+                    state: "on".to_string(),
+                    note: "every request denied".to_string(),
+                },
+                Row {
+                    name: "DNS prefetch".to_string(),
+                    state: "on".to_string(),
+                    note: "disabled in engine settings".to_string(),
+                },
+                Row {
+                    name: "Hyperlink auditing (a ping)".to_string(),
+                    state: "on".to_string(),
+                    note: "disabled in engine settings".to_string(),
+                },
+                Row {
+                    name: "Tracker blocking".to_string(),
+                    state: "partial".to_string(),
+                    note: "ITP only; WebKitGTK exposes no blocked-request count".to_string(),
+                },
+                Row {
+                    name: "Ad blocking".to_string(),
+                    state: "off".to_string(),
+                    note: "not implemented".to_string(),
+                },
+                Row {
+                    name: "Session storage".to_string(),
+                    state: "on".to_string(),
+                    note: "ephemeral context: cookies, cache, localStorage, IndexedDB and service workers live in memory".to_string(),
+                },
+            ],
+            permissions: vec![
+                "Microphone, Camera, Geolocation, Notifications".to_string(),
+                "Clipboard, MIDI, pointer lock, install of media plugins".to_string(),
+                "Everything else WebKitGTK asks about".to_string(),
+            ],
+            limitations: vec![
+                "Not anonymity and not Tor. A page that runs JavaScript can still infer things about the machine.".to_string(),
+                "In-memory storage means logins do not survive a restart; that is deliberate.".to_string(),
+                "Font metrics and the GPU model cannot be normalised.".to_string(),
+                "No blocker statistics: the engine does not report how many requests ITP stopped.".to_string(),
+            ],
+        }
     }
 
     fn bookmarks_html(&self) -> String {
@@ -1306,6 +1493,9 @@ impl App {
     }
 
     fn new_identity(&self) {
+        // New identity = new canvas key as well as fresh storage.
+        self.seed.set(SessionSeed::new());
+        self.sync_fp_script();
         let a = self.rc();
         clear_session_data(move || {
             let tabs: Vec<Rc<Tab>> = a.tabs.borrow().clone();
@@ -1324,8 +1514,9 @@ impl App {
             self.ucm.remove_script(&old);
         }
         if self.antifp.get() {
+            let payload = antifp_js(self.seed.get(), self.strict.get());
             let script = webkit2gtk::UserScript::new(
-                ANTI_FP_JS,
+                &payload,
                 UserContentInjectedFrames::AllFrames,
                 webkit2gtk::UserScriptInjectionTime::Start,
                 &[],
@@ -1338,11 +1529,13 @@ impl App {
 
     fn apply_fingerprint_mode(&self) {
         let on = self.antifp.get();
+        let strict = self.strict.get();
         for t in self.tabs.borrow().iter() {
             if let Some(s) = WebViewExt::settings(&t.view) {
-                s.set_user_agent(if on { Some(TOR_UA) } else { None });
-                s.set_enable_webgl(!on);
-                s.set_enable_webrtc(!on);
+                // Engine-level switches only exist as an on/off pair, so they
+                // are used only in strict mode; standard mode coerces from JS.
+                s.set_enable_webgl(!(on && strict));
+                s.set_enable_webrtc(!(on && strict));
                 s.set_enable_media_stream(!on);
             }
             t.view.reload();
@@ -1685,6 +1878,25 @@ impl App {
             let a = self.rc();
             mi_ext_add.connect_activate(move |_| a.install_userscript_dialog());
         }
+        let mi_privacy = add("Privacy");
+        {
+            let a = self.rc();
+            mi_privacy.connect_activate(move |_| {
+                if let Some(t) = a.current_tab() {
+                    a.navigate(&t, PRIVACY_PAGE);
+                }
+            });
+        }
+        let mi_strict = add(if self.strict.get() { "Strict mode: on" } else { "Strict mode: off" });
+        {
+            let a = self.rc();
+            mi_strict.connect_activate(move |_| {
+                let now = !a.strict.get();
+                a.strict.set(now);
+                set_pref("strict", now);
+                a.apply_fingerprint_mode();
+            });
+        }
         let mi_newid = add("New identity  (clear cookies + history)");
         {
             let a = self.rc();
@@ -1744,11 +1956,13 @@ impl App {
         menu.append(&mi_bm);
         menu.append(&mi_ext);
         menu.append(&mi_ext_add);
+        menu.append(&mi_privacy);
         menu.append(&gtk::SeparatorMenuItem::new());
         menu.append(&mi_newid);
         menu.append(&mi_autoclear);
         menu.append(&gtk::SeparatorMenuItem::new());
         menu.append(&mi_fp);
+        menu.append(&mi_strict);
         menu.append(&mi_force);
         menu.append(&mi_theme);
         menu.append(&gtk::SeparatorMenuItem::new());

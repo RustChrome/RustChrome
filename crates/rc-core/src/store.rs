@@ -27,6 +27,9 @@ pub struct Prefs {
     pub force_dark: bool,
     /// Pin the fingerprint: UA override, WebGL/WebRTC shims, injected script.
     pub antifp: bool,
+    /// Strict mode: WebGL contexts denied and WebRTC removed entirely, at the
+    /// cost of breaking some sites. Off = coerce instead of remove.
+    pub strict: bool,
     /// Keep cookies/cache on disk between launches. Off = InPrivate tabs.
     pub keep_session: bool,
     pub show_bookmarks: bool,
@@ -42,6 +45,7 @@ impl Default for Prefs {
             theme: "light".to_string(),
             force_dark: false,
             antifp: true,
+            strict: false,
             keep_session: false,
             show_bookmarks: true,
             // Same default as the GTK build (HOME + search are Google).
@@ -90,6 +94,7 @@ impl Prefs {
             }
             "force_dark" => self.force_dark = value.as_bool().unwrap_or(self.force_dark),
             "antifp" => self.antifp = value.as_bool().unwrap_or(self.antifp),
+            "strict" => self.strict = value.as_bool().unwrap_or(self.strict),
             "keep_session" => self.keep_session = value.as_bool().unwrap_or(self.keep_session),
             "show_bookmarks" => {
                 self.show_bookmarks = value.as_bool().unwrap_or(self.show_bookmarks)

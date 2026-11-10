@@ -290,6 +290,7 @@
   <button class="item" data-act="downloads-folder"><span>Downloads folder</span></button>
   <button class="item" data-act="page-bookmarks"><span>Bookmarks</span></button>
   <button class="item" data-act="page-extensions"><span>Extensions</span></button>
+  <button class="item" data-act="page-privacy"><span>Privacy</span></button>
   <button class="item" data-act="downloads"><span>Downloads</span><span class="key" id="dlcount"></span></button>
   <div class="sep"></div>
   <button class="item" data-act="newidentity"><span>New identity (clear cookies + site data)</span></button>
@@ -309,6 +310,11 @@
   <div class="row">
     <div><div class="label">Search engine</div><div class="hint">Used by the address bar and the new tab page</div></div>
     <select id="engine"></select>
+  </div>
+
+  <div class="row">
+    <div><div class="label">Strict mode</div><div class="hint">Deny WebGL and remove WebRTC entirely. Breaks some sites; off by default.</div></div>
+    <button class="toggle" data-pref="strict"></button>
   </div>
 
   <div class="row">
@@ -554,6 +560,7 @@
     "downloads-folder": () => post({ cmd: "openfolder", which: "downloads" }),
     "page-bookmarks": () => post({ cmd: "page", which: "bookmarks" }),
     "page-extensions": () => post({ cmd: "page", which: "extensions" }),
+    "page-privacy": () => post({ cmd: "page", which: "privacy" }),
     downloads: () => openPanel("panel-downloads"),
     newidentity: () => { if (confirm("Clear cookies and site data and close every tab?")) post({ cmd: "newidentity" }); },
     "clear-on-exit": () => post({ cmd: "setpref", key: "keep_session", value: !state.prefs.keep_session }),

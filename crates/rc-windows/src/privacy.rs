@@ -5,16 +5,28 @@
 //! the engine *does* offer: InPrivate profiles, strict tracking prevention,
 //! deny-all permissions and autofill/password saving off.
 
-use rc_core::privacy::{ANTI_FP_JS, FORCE_DARK_CSS};
+use rc_core::privacy::FORCE_DARK_CSS;
 use rc_core::store::Prefs;
 use webview2_com::Microsoft::Web::WebView2::Win32::*;
 use webview2_com::AddScriptToExecuteOnDocumentCreatedCompletedHandler;
 use windows::core::{Interface, HSTRING};
 
-/// A current Chromium UA. Deliberately *not* a Firefox string: an engine/UA
-/// mismatch is a louder fingerprint than a common one.
-pub const CHROME_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
-(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+/// UA derived from the runtime that is actually installed, with the `Edg/`
+/// token removed. Keeping the real major version means the UA never advertises
+/// a feature set the engine does not have, and it agrees with the (disabled)
+/// client hints.
+pub fn user_agent(runtime: &str) -> String {
+    let major: String = runtime
+        .split('.')
+        .next()
+        .filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()))
+        .unwrap_or("124")
+        .to_string();
+    format!(
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
+(KHTML, like Gecko) Chrome/{major}.0.0.0 Safari/537.36"
+    )
+}
 
 /// Settings that apply to a freshly created webview.
 ///
@@ -63,16 +75,19 @@ pub fn configure(webview: &ICoreWebView2, prefs: &Prefs, is_chrome: bool) {
 }
 
 /// Apply or clear the anti-fingerprinting user agent on an existing webview.
-pub fn set_user_agent(webview: &ICoreWebView2, antifp: bool) {
+pub fn set_user_agent(webview: &ICoreWebView2, ua: Option<&str>) {
     unsafe {
         if let Ok(s) = webview.Settings() {
             // UserAgent only exists from ICoreWebView2Settings2 onwards.
             if let Ok(s2) = s.cast::<ICoreWebView2Settings2>() {
-                if antifp {
-                    let ua = HSTRING::from(CHROME_UA);
-                    let _ = s2.SetUserAgent(&ua);
-                } else {
-                    let _ = s2.SetUserAgent(&HSTRING::new());
+                match ua {
+                    Some(ua) => {
+                        let ua = HSTRING::from(ua);
+                        let _ = s2.SetUserAgent(&ua);
+                    }
+                    None => {
+                        let _ = s2.SetUserAgent(&HSTRING::new());
+                    }
                 }
             }
         }
@@ -123,9 +138,9 @@ pub fn force_dark_js() -> String {
     )
 }
 
-/// The anti-fingerprinting payload, ready to inject.
-pub fn antifp_js() -> &'static str {
-    ANTI_FP_JS
+/// The anti-fingerprinting payload for this session.
+pub fn antifp_js(seed: rc_core::privacy::SessionSeed, strict: bool) -> String {
+    rc_core::privacy::antifp_js(seed, strict)
 }
 
 #[cfg(test)]

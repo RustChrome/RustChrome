@@ -33,9 +33,15 @@ fn main() {
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
     }
 
-    let smoke = std::env::args().any(|a| a == "--smoke-test");
+    let args: Vec<String> = std::env::args().collect();
+    let smoke = args.iter().any(|a| a == "--smoke-test");
+    let probe = args
+        .iter()
+        .position(|a| a == "--privacy-probe")
+        .and_then(|i| args.get(i + 1))
+        .cloned();
 
-    if let Err(e) = run(smoke) {
+    if let Err(e) = run(smoke, probe) {
         let out = std::env::var("RUSTCHROME_SMOKE_OUT").unwrap_or_default();
         if !out.is_empty() {
             let _ = std::fs::write(&out, format!("FAIL {e}\n"));
@@ -47,7 +53,7 @@ fn main() {
     }
 }
 
-fn run(smoke: bool) -> Result<(), String> {
+fn run(smoke: bool, probe: Option<String>) -> Result<(), String> {
     let runtime = webview::runtime_version().ok_or_else(|| {
         "The Microsoft Edge WebView2 Runtime is not installed.\n\n\
          RustChrome needs it to render pages. Download the Evergreen Bootstrapper from\n\
@@ -56,7 +62,7 @@ fn run(smoke: bool) -> Result<(), String> {
             .to_string()
     })?;
 
-    if !smoke {
+    if !smoke && probe.is_none() {
         ensure_single_instance();
     }
 
@@ -66,7 +72,7 @@ fn run(smoke: bool) -> Result<(), String> {
         .map_err(|e| format!("could not create the window: {e}"))?;
 
     let env = webview::create_environment()?;
-    let app = Rc::new(RefCell::new(app::App::new(hwnd, env, smoke)));
+    let app = Rc::new(RefCell::new(app::App::new(hwnd, env, smoke, probe)));
     app::install(app.clone());
     app::with_app(|a| a.boot());
 

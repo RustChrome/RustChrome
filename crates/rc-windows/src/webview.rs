@@ -64,7 +64,7 @@ pub fn create_environment() -> Result<ICoreWebView2Environment, String> {
         let options = CoreWebView2EnvironmentOptions::default();
         // Strip Edge-only chrome we do not implement and never show.
         options.set_additional_browser_arguments(String::from(
-            "--disable-features=msEdgeSidebarV2,msEdgeShoppingAssistant,msFeedback,msEdgeCollections",
+            "--disable-features=msEdgeSidebarV2,msEdgeShoppingAssistant,msFeedback,msEdgeCollections,UserAgentClientHint --accept-lang=en-US,en --dns-prefetch-disable --no-pings --force-webrtc-ip-handling-policy=disable_non_proxied_udp",
         ));
         // Tracking prevention is on by default in this crate; make it explicit.
         options.set_enable_tracking_prevention(true);

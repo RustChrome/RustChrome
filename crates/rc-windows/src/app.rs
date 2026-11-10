@@ -8,6 +8,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use rc_core::dashboard::{Dashboard, Row};
+use rc_core::privacy::SessionSeed;
 use rc_core::store::{self, Bookmark, Prefs};
 use serde_json::{json, Value};
 use webview2_com::Microsoft::Web::WebView2::Win32::*;
@@ -86,11 +88,23 @@ pub struct App {
     pub closing: bool,
     pub smoke: bool,
     pub runtime: String,
+    /// Canvas-noise key for this session; rotated by New identity.
+    pub seed: SessionSeed,
+    /// User agent derived from the installed runtime (no `Edg/` token).
+    pub ua: String,
+    /// `--privacy-probe <path>`: run the probe once and write the report there.
+    pub probe: Option<String>,
 }
 
 impl App {
-    pub fn new(hwnd: HWND, env: ICoreWebView2Environment, smoke: bool) -> Self {
+    pub fn new(
+        hwnd: HWND,
+        env: ICoreWebView2Environment,
+        smoke: bool,
+        probe: Option<String>,
+    ) -> Self {
         let runtime = webview::runtime_version().unwrap_or_else(|| "unknown".into());
+        let ua = privacy::user_agent(&runtime);
         Self {
             hwnd,
             env,
@@ -110,6 +124,9 @@ impl App {
             closing: false,
             smoke,
             runtime,
+            seed: SessionSeed::new(),
+            ua,
+            probe,
         }
     }
 
@@ -299,6 +316,8 @@ impl App {
             Ok(created) => {
                 let is_active = idx == self.active;
                 privacy::configure(&created.webview, &self.prefs, false);
+                let ua = if self.prefs.antifp { Some(self.ua.clone()) } else { None };
+                privacy::set_user_agent(&created.webview, ua.as_deref());
                 let zoom = self.tabs[idx].zoom;
                 unsafe {
                     let _ = created.controller.SetZoomFactor(zoom);
@@ -478,7 +497,8 @@ impl App {
         privacy::remove_scripts(&wv, &old);
 
         if self.prefs.antifp {
-            privacy::add_script(&wv, privacy::antifp_js(), move |sid| {
+            let js = privacy::antifp_js(self.seed, self.prefs.strict);
+            privacy::add_script(&wv, &js, move |sid| {
                 with_app(move |a| a.track_script(id, sid))
             });
         }
@@ -514,24 +534,170 @@ impl App {
                 &store::userscript_files(),
                 &store::userscript_dir().to_string_lossy(),
             ),
+            "privacy" => rc_core::dashboard::dashboard_html(&self.build_dashboard()),
             _ => return,
         };
         let idx = self.active;
         self.tabs[idx].is_new_tab = true;
         self.tabs[idx].url.clear();
         self.tabs[idx].wants = Some(String::new());
-        self.tabs[idx].title = if which == "bookmarks" { "Bookmarks" } else { "Extensions" }.to_string();
+        self.tabs[idx].title = match which {
+            "bookmarks" => "Bookmarks",
+            "extensions" => "Extensions",
+            _ => "Privacy",
+        }
+        .to_string();
         unsafe {
             let _ = wv.NavigateToString(&HSTRING::from(html));
         }
         self.push_state();
     }
 
+    /// Run the shared probe in the current page and write its JSON report.
+    fn run_probe(&mut self) {
+        let Some(path) = self.probe.clone() else { return };
+        let Some(wv) = self.tabs.first().and_then(|t| t.webview.clone()) else { return };
+        unsafe {
+            let h = ExecuteScriptCompletedHandler::create(Box::new(move |hr, result: String| {
+                let text = match hr {
+                    Ok(()) => match serde_json::from_str::<Value>(&result) {
+                        Ok(Value::String(s)) => s,
+                        _ => result.clone(),
+                    },
+                    Err(e) => format!("FAIL execute: {e}"),
+                };
+                let _ = std::fs::write(&path, text);
+                with_app(|a| {
+                    a.closing = true;
+                    let _ = DestroyWindow(a.hwnd);
+                });
+                Ok(())
+            }));
+            let _ = wv.ExecuteScript(&HSTRING::from(rc_core::privacy::PROBE_JS), &h);
+        }
+    }
+
+    /// Everything the dashboard shows comes from real state.
+    fn build_dashboard(&self) -> Dashboard {
+        let on = |b: bool| if b { "on" } else { "off" }.to_string();
+        let strict = self.prefs.strict;
+        let antifp = self.prefs.antifp;
+        let protections = vec![
+            Row {
+                name: "User agent".into(),
+                state: on(antifp),
+                note: format!("engine setting, Chrome-like, Edg/ stripped; client hints disabled ({})", self.ua),
+            },
+            Row {
+                name: "Canvas".into(),
+                state: if antifp { "partial".into() } else { "off".into() },
+                note: "per-session noise: same pixels within a session, different every launch".into(),
+            },
+            Row {
+                name: "WebGL".into(),
+                state: if !antifp { "off" } else if strict { "on" } else { "partial" }.into(),
+                note: if strict {
+                    "contexts denied".into()
+                } else {
+                    "context available, GPU vendor/renderer coerced".to_string()
+                },
+            },
+            Row {
+                name: "WebRTC".into(),
+                state: if !antifp { "off" } else if strict { "on" } else { "partial" }.into(),
+                note: if strict {
+                    "API removed".into()
+                } else {
+                    "API available, relay-only candidates (no LAN address), non-proxied UDP blocked".to_string()
+                },
+            },
+            Row {
+                name: "Time zone".into(),
+                state: on(antifp),
+                note: "UTC in getTimezoneOffset, Intl and Date#toString".into(),
+            },
+            Row {
+                name: "Languages".into(),
+                state: on(antifp),
+                note: "en-US,en in script and in Accept-Language".into(),
+            },
+            Row {
+                name: "Screen size".into(),
+                state: "off".into(),
+                note: "reported as-is: a pinned size would contradict the real window".into(),
+            },
+            Row {
+                name: "Cookies / third-party storage".into(),
+                state: "on".into(),
+                note: "tracking prevention level: strict".into(),
+            },
+            Row {
+                name: "Permissions".into(),
+                state: "on".into(),
+                note: "every request denied before a prompt is shown".into(),
+            },
+            Row {
+                name: "DNS prefetch / preconnect".into(),
+                state: "on".into(),
+                note: "disabled at the engine".into(),
+            },
+            Row {
+                name: "Hyperlink auditing (a ping)".into(),
+                state: "on".into(),
+                note: "disabled at the engine".into(),
+            },
+            Row {
+                name: "Tracker blocking".into(),
+                state: "partial".into(),
+                note: "Microsoft's tracking-prevention list; the engine exposes no blocked count, so none is shown".into(),
+            },
+            Row {
+                name: "Ad blocking".into(),
+                state: "off".into(),
+                note: "not implemented".into(),
+            },
+        ];
+
+        Dashboard {
+            engine: format!("WebView2 {}", self.runtime),
+            session_mode: if self.prefs.keep_session {
+                "persistent (data kept between launches)".into()
+            } else {
+                "in-private (nothing written to disk)".into()
+            },
+            settings: vec![
+                ("Anti-fingerprinting".into(), on(antifp)),
+                ("Strict mode".into(), on(strict)),
+                ("Keep session data".into(), on(self.prefs.keep_session)),
+                ("Search engine".into(), self.prefs.engine.clone()),
+                ("Theme".into(), self.prefs.theme.clone()),
+            ],
+            protections,
+            permissions: vec![
+                "Microphone, Camera, Geolocation, Notifications".into(),
+                "Sensors (ambient light, accelerometer, gyroscope, magnetometer)".into(),
+                "Clipboard read, File read/write, Multiple automatic downloads".into(),
+                "Autoplay, MIDI sysex, Window management, Unknown".into(),
+            ],
+            limitations: vec![
+                "Not anonymity and not Tor. A page that runs JavaScript can still infer things about the machine.".into(),
+                "WebGL and WebRTC cannot be switched off in the engine; they are coerced (Strict removes them in script).".into(),
+                "Font metrics and the GPU model cannot be normalised.".into(),
+                "The WebView2 runtime auto-updates, so the Chromium fingerprint surface can change without a RustChrome release.".into(),
+                "No blocker statistics: the engine does not report how many requests tracking prevention stopped.".into(),
+            ],
+        }
+    }
+
     fn show_new_tab(&mut self, idx: usize) {
         let Some(wv) = self.tabs.get(idx).and_then(|t| t.webview.clone()) else {
             return;
         };
-        let html = pages::new_tab_html(&self.prefs.engine, self.prefs.is_dark());
+        let html = if self.probe.is_some() {
+            rc_core::privacy::probe_html()
+        } else {
+            pages::new_tab_html(&self.prefs.engine, self.prefs.is_dark())
+        };
         self.tabs[idx].wants = Some(String::new());
         self.tabs[idx].url.clear();
         self.tabs[idx].is_new_tab = true;
@@ -662,6 +828,13 @@ impl App {
         }
         if self.smoke && id == self.tabs.first().map(|t| t.id).unwrap_or(0) && (ok || !canceled) {
             self.finish_smoke(ok, status);
+        }
+        if ok
+            && self.probe.is_some()
+            && id == self.tabs.first().map(|t| t.id).unwrap_or(0)
+            && !self.closing
+        {
+            self.run_probe();
         }
         self.push_state();
     }
@@ -938,8 +1111,9 @@ impl App {
                 }
                 for idx in 0..self.tabs.len() {
                     if key == "antifp" {
+                        let ua = if self.prefs.antifp { Some(self.ua.clone()) } else { None };
                         if let Some(wv) = self.tabs[idx].webview.clone() {
-                            privacy::set_user_agent(&wv, self.prefs.antifp);
+                            privacy::set_user_agent(&wv, ua.as_deref());
                         }
                     }
                     self.reinstall_scripts(idx);
@@ -1060,6 +1234,7 @@ impl App {
                 "theme": self.prefs.theme,
                 "force_dark": self.prefs.force_dark,
                 "antifp": self.prefs.antifp,
+                "strict": self.prefs.strict,
                 "keep_session": self.prefs.keep_session,
                 "show_bookmarks": self.prefs.show_bookmarks,
                 "engine": self.prefs.engine,
@@ -1204,6 +1379,8 @@ impl App {
     }
 
     fn new_identity(&mut self) {
+        // A new identity means a new canvas key as well as fresh storage.
+        self.seed.rotate();
         // Close every tab, drop the closed-tab list, clear data, start fresh.
         let ids: Vec<u64> = self.tabs.iter().map(|t| t.id).collect();
         for id in ids {

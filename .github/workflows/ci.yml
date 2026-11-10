@@ -15,12 +15,33 @@ jobs:
       - name: System dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libgtk-3-dev libwebkit2gtk-4.1-dev
+          sudo apt-get install -y --no-install-recommends libgtk-3-dev libwebkit2gtk-4.1-dev \
+            xvfb dbus-x11
       - uses: dtolnay/rust-toolchain@stable
       - name: Build the Linux package (unchanged release path)
         run: cargo build --release
       - name: Binary
         run: ls -l target/release/rustchrome
+
+      - name: Privacy probe (two fresh sessions)
+        run: |
+          for i in 1 2; do
+            timeout 120 xvfb-run -a env WEBKIT_DISABLE_COMPOSITING_MODE=1 LIBGL_ALWAYS_SOFTWARE=1 \
+              RUSTCHROME_PROBE="$PWD/probe$i.json" \
+              dbus-run-session -- ./target/release/rustchrome || echo "probe $i exit $?"
+            sleep 1
+          done
+          ls -l probe1.json probe2.json || true
+
+      - name: Check privacy invariants
+        run: python3 scripts/privacy_check.py probe1.json probe2.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probe-linux
+          path: probe*.json
+          if-no-files-found: warn
 
   windows:
     name: Windows (Win32 / WebView2)
@@ -76,6 +97,26 @@ jobs:
           if ($p.ExitCode -ne 0) { Write-Host "::error::browser exited with $($p.ExitCode)"; exit 1 }
           if (-not (Test-Path smoke.txt)) { Write-Host "::error::no smoke result file"; exit 1 }
           if (-not (Select-String -Path smoke.txt -Pattern '^OK')) { Write-Host "::error::navigation did not complete"; exit 1 }
+
+      - name: Privacy probe (two fresh sessions)
+        shell: powershell
+        run: |
+          foreach ($i in 1..2) {
+            $out = Join-Path $PWD "probe$i.json"
+            $p = Start-Process -FilePath ".\target\release\rustchrome.exe" -ArgumentList "--privacy-probe", $out -PassThru -Wait
+            Write-Output "probe $i exit $($p.ExitCode)"
+          }
+          Get-ChildItem probe*.json | Select-Object Name, Length
+
+      - name: Check privacy invariants
+        run: python scripts/privacy_check.py probe1.json probe2.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probe-windows
+          path: probe*.json
+          if-no-files-found: warn
 
       - name: Package portable zip
         shell: powershell
