@@ -272,6 +272,9 @@ window.__probe = function () {
   document.getElementById('out').textContent = s;
   return s;
 };
+// The report is published as the title so a host can read it with the plain
+// "document title" API instead of evaluating JavaScript.
+try { document.title = window.__probe(); } catch (e) { document.title = 'FAIL ' + e; }
 </script></body></html>"#
         .replace("__PROBE__", PROBE_JS)
 }

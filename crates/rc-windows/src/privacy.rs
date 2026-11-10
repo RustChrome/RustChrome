@@ -157,7 +157,10 @@ mod tests {
 
     #[test]
     fn ua_is_chromium_not_firefox() {
-        assert!(CHROME_UA.contains("Chrome/124"));
-        assert!(!CHROME_UA.contains("Firefox"));
+        let ua = user_agent("131.0.2903.86");
+        assert!(ua.contains("Chrome/131"), "{ua}");
+        assert!(!ua.contains("Firefox"));
+        // The Edg/ token is what makes a WebView2 app recognisable.
+        assert!(!ua.contains("Edg/"), "{ua}");
     }
 }

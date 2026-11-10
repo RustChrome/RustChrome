@@ -13,7 +13,8 @@ use std::path::PathBuf;
 use std::rc::{Rc, Weak};
 use rc_core::privacy::{antifp_js, SessionSeed};
 use webkit2gtk::{
-    CookieAcceptPolicy, DownloadExt, FindControllerExt, LoadEvent, SettingsExt, URIRequestExt,
+    CookieAcceptPolicy, CookieManagerExt, DownloadExt, FindControllerExt, LoadEvent, SettingsExt,
+    URIRequestExt,
     UserContentInjectedFrames, WebsiteDataManagerExt,
     NavigationPolicyDecision, NavigationPolicyDecisionExt, PolicyDecisionExt, PolicyDecisionType,
     UserContentManager,
@@ -97,24 +98,12 @@ fn probe_path() -> Option<PathBuf> {
 }
 
 fn finish_probe(view: &WebView, path: &PathBuf) {
-    let path = path.clone();
-    view.evaluate_javascript(
-        rc_core::privacy::PROBE_JS,
-        None,
-        None,
-        None::<&gtk::gio::Cancellable>,
-        move |res| {
-            let text = match res {
-                Ok(v) => v
-                    .to_str()
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| format!("{v:?}")),
-                Err(e) => format!("FAIL {e}"),
-            };
-            let _ = std::fs::write(&path, text);
-            std::process::exit(0);
-        },
-    );
+    let text = view
+        .title()
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "FAIL no title".to_string());
+    let _ = std::fs::write(path, text);
+    std::process::exit(0);
 }
 
 
