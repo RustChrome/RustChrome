@@ -1446,12 +1446,34 @@ impl App {
                 if let Some(path) = d.filename() {
                     match rc_core::features::parse_bookmarks_file(&path) {
                         Ok(items) => {
-                            let (added, skipped) = {
+                            // The GTK shell has its own Bookmark type; convert,
+                            // merge with the shared code, convert back.
+                            let mut merged: Vec<rc_core::store::Bookmark> = a
+                                .bookmarks
+                                .borrow()
+                                .iter()
+                                .map(|b| rc_core::store::Bookmark {
+                                    title: b.title.clone(),
+                                    url: b.url.clone(),
+                                })
+                                .collect();
+                            let (added, skipped) =
+                                rc_core::features::merge_bookmarks(&mut merged, items);
+                            {
                                 let mut bm = a.bookmarks.borrow_mut();
-                                let r = rc_core::features::merge_bookmarks(&mut *bm, items);
-                                let _ = rc_core::store::save_bookmarks(&bm);
-                                r
-                            };
+                                bm.clear();
+                                for b in merged {
+                                    bm.push(Bookmark { title: b.title, url: b.url });
+                                }
+                                let _ = rc_core::store::save_bookmarks(
+                                    &bm.iter()
+                                        .map(|b| rc_core::store::Bookmark {
+                                            title: b.title.clone(),
+                                            url: b.url.clone(),
+                                        })
+                                        .collect::<Vec<_>>(),
+                                );
+                            }
                             a.refresh_bookmarks_bar();
                             a.info(&format!(
                                 "Imported {added} bookmark(s), skipped {skipped} duplicate(s)."
@@ -1468,7 +1490,15 @@ impl App {
 
     fn export_bookmarks(&self) {
         let dest = rc_core::downloads_dir().join("rustchrome-bookmarks.html");
-        let bookmarks = self.bookmarks.borrow();
+        let bookmarks: Vec<rc_core::store::Bookmark> = self
+            .bookmarks
+            .borrow()
+            .iter()
+            .map(|b| rc_core::store::Bookmark {
+                title: b.title.clone(),
+                url: b.url.clone(),
+            })
+            .collect();
         let html = rc_core::features::export_netscape(&bookmarks);
         match std::fs::write(&dest, html) {
             Ok(()) => self.info(&format!("Exported bookmarks to {}", dest.display())),
