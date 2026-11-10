@@ -2046,8 +2046,20 @@ impl App {
                 bottom: chrome_px,
             };
             webview::set_rasterization(&ch.controller, scale);
-            unsafe {
-                let _ = ch.controller.SetBounds(rect);
+            let hr = unsafe { ch.controller.SetBounds(rect) };
+            if self.smoke {
+                let title = unsafe {
+                    let mut p = PWSTR::null();
+                    if ch.webview.DocumentTitle(&mut p).is_ok() {
+                        webview::take(p)
+                    } else {
+                        String::new()
+                    }
+                };
+                self.trace(&format!(
+                    "chrome bounds {{0,0,{},{}}} hr={:?} title={:?}",
+                    w, chrome_px, hr.map(|_| 0i32), title
+                ));
             }
         }
         let content = RECT {
@@ -2059,8 +2071,15 @@ impl App {
         for t in &self.tabs {
             if let Some(c) = &t.controller {
                 webview::set_rasterization(c, scale);
-                unsafe {
-                    let _ = c.SetBounds(content);
+                let hr = unsafe { c.SetBounds(content) };
+                if self.smoke {
+                    self.trace(&format!(
+                        "tab {} bounds {{0,{},,{}}} hr={:?}",
+                        t.id,
+                        chrome_px,
+                        h,
+                        hr.map(|_| 0i32)
+                    ));
                 }
             }
         }
