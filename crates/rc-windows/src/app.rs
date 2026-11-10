@@ -20,6 +20,7 @@ use webview2_com::{
 };
 use windows::core::{Interface, BOOL, HSTRING, PWSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::UI::Input::KeyboardAndMouse::GetKeyState;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::{chrome, downloads, pages, privacy, webview, window};
@@ -252,7 +253,7 @@ impl App {
                 unsafe {
                     let _ = created.controller.SetZoomFactor(zoom);
                     let _ = created.controller.SetIsVisible(is_active);
-                    let _ = created.controller.SetRasterizationScale(window::dpi_scale(self.hwnd));
+                    webview::set_rasterization(&created.controller, window::dpi_scale(self.hwnd));
                 }
                 self.wire_events(&created.webview, &created.controller, id);
                 self.tabs[idx].controller = Some(created.controller);
@@ -385,8 +386,10 @@ impl App {
                 }
                 Ok(())
             }));
-            let mut t = 0i64;
-            let _ = wv.add_DownloadStarting(&h, &mut t);
+            if let Ok(w4) = wv.cast::<ICoreWebView2_4>() {
+                let mut t = 0i64;
+                let _ = w4.add_DownloadStarting(&h, &mut t);
+            }
 
             // -- renderer crash
             let h = ProcessFailedEventHandler::create(Box::new(move |_s, _a| {
@@ -399,7 +402,8 @@ impl App {
             // -- keyboard
             let h = AcceleratorKeyPressedEventHandler::create(Box::new(move |_s, args| {
                 if let Some(args) = args {
-                    let vk = args.VirtualKey().unwrap_or(0);
+                    let mut vk = 0u32;
+                    let _ = args.VirtualKey(&mut vk);
                     if with_app_handled(move |a| a.on_key(vk)) {
                         let _ = args.SetHandled(true);
                     }
@@ -713,10 +717,12 @@ impl App {
 
     fn on_download(&mut self, args: ICoreWebView2DownloadStartingEventArgs) {
         let mut uri = String::new();
-        if let Ok(op) = args.DownloadOperation() {
-            let mut p = PWSTR::null();
-            if op.Uri(&mut p).is_ok() {
-                uri = webview::take(p);
+        unsafe {
+            if let Ok(op) = args.DownloadOperation() {
+                let mut p = PWSTR::null();
+                if op.Uri(&mut p).is_ok() {
+                    uri = webview::take(p);
+                }
             }
         }
         if uri.is_empty() {
@@ -757,7 +763,7 @@ impl App {
 
         // Attach progress/state reporting.
         unsafe {
-            if let Ok(op) = args.DownloadOperation() {
+            if let Ok(op) = unsafe { args.DownloadOperation() } {
                 let h = webview2_com::BytesReceivedChangedEventHandler::create(Box::new(
                     move |sender, _a| {
                         if let Some(op) = sender {
@@ -1238,16 +1244,16 @@ impl App {
 
         if let Some(ch) = &self.chrome {
             let rect = RECT { left: 0, top: 0, right: w, bottom: chrome_px };
+            webview::set_rasterization(&ch.controller, scale);
             unsafe {
-                let _ = ch.controller.SetRasterizationScale(scale);
                 let _ = ch.controller.SetBounds(rect);
             }
         }
         let content = RECT { left: 0, top: chrome_px, right: w, bottom: h };
         for t in &self.tabs {
             if let Some(c) = &t.controller {
+                webview::set_rasterization(c, scale);
                 unsafe {
-                    let _ = c.SetRasterizationScale(scale);
                     let _ = c.SetBounds(content);
                 }
             }
@@ -1434,7 +1440,7 @@ fn run_shutdown(hwnd: HWND) {
         }
         if let Some(wv) = a.tabs.first().and_then(|t| t.webview.clone()) {
             if let Ok(w13) = wv.cast::<ICoreWebView2_13>() {
-                profile = w13.Profile().ok();
+                profile = unsafe { w13.Profile().ok() };
             }
         }
     });

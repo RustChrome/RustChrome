@@ -55,7 +55,8 @@ pub fn unique_path(dir: &Path, suggested: &str) -> PathBuf {
 pub fn suggested_name(args: &ICoreWebView2DownloadStartingEventArgs, uri: &str) -> String {
     // Content-Disposition carries the real name when there is one.
     if let Some(op) = unsafe { args.DownloadOperation().ok() } {
-        if let Ok(cd) = unsafe { op.ContentDisposition() } {
+        let mut cd = windows::core::PWSTR::null();
+        if unsafe { op.ContentDisposition(&mut cd) }.is_ok() {
             let v = unsafe { crate::webview::take(cd) };
             if let Some(name) = v.split(';').find_map(|part| {
                 let part = part.trim();

@@ -97,6 +97,16 @@ pub fn create_environment() -> Result<ICoreWebView2Environment, String> {
 ///
 /// Returns `Err` only for failures that happen before the async request is
 /// issued; everything later is delivered to `on_ready`.
+/// `RasterizationScale` only exists from `ICoreWebView2Controller3` onwards;
+/// on older runtimes the controller simply renders at 1.0.
+pub fn set_rasterization(ctrl: &ICoreWebView2Controller, scale: f64) {
+    unsafe {
+        if let Ok(c3) = ctrl.cast::<ICoreWebView2Controller3>() {
+            let _ = c3.SetRasterizationScale(scale);
+        }
+    }
+}
+
 pub fn create_controller(
     env: &ICoreWebView2Environment,
     hwnd: HWND,

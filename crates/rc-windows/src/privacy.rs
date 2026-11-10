@@ -45,8 +45,12 @@ pub fn configure(webview: &ICoreWebView2, prefs: &Prefs, is_chrome: bool) {
 
         if let Ok(w13) = webview.cast::<ICoreWebView2_13>() {
             if let Ok(profile) = w13.Profile() {
-                let _ = profile
-                    .SetPreferredTrackingPreventionLevel(COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_STRICT);
+                // Level lives on Profile3; it is a no-op on runtimes without it.
+                if let Ok(p3) = profile.cast::<ICoreWebView2Profile3>() {
+                    let _ = p3.SetPreferredTrackingPreventionLevel(
+                        COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_STRICT,
+                    );
+                }
                 let scheme = if prefs.is_dark() {
                     COREWEBVIEW2_PREFERRED_COLOR_SCHEME_DARK
                 } else {
@@ -62,11 +66,14 @@ pub fn configure(webview: &ICoreWebView2, prefs: &Prefs, is_chrome: bool) {
 pub fn set_user_agent(webview: &ICoreWebView2, antifp: bool) {
     unsafe {
         if let Ok(s) = webview.Settings() {
-            if antifp {
-                let ua = HSTRING::from(CHROME_UA);
-                let _ = s.SetUserAgent(&ua);
-            } else {
-                let _ = s.SetUserAgent(&HSTRING::new());
+            // UserAgent only exists from ICoreWebView2Settings2 onwards.
+            if let Ok(s2) = s.cast::<ICoreWebView2Settings2>() {
+                if antifp {
+                    let ua = HSTRING::from(CHROME_UA);
+                    let _ = s2.SetUserAgent(&ua);
+                } else {
+                    let _ = s2.SetUserAgent(&HSTRING::new());
+                }
             }
         }
     }
