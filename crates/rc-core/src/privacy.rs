@@ -71,7 +71,7 @@ const ANTI_FP_TEMPLATE: &str = r##"
     Date.prototype.getTimezoneOffset = () => 0;
     const dts = Date.prototype.toString;
     Date.prototype.toString = function () {
-      return dts.call(this).replace(/GMT[+-]\d{4}[^)]*/, 'GMT+0000 (Coordinated Universal Time)');
+      return dts.call(this).replace(/GMT[+-]\d{4}[^)]*\)/, 'GMT+0000 (Coordinated Universal Time)');
     };
     const ro = Intl.DateTimeFormat.prototype.resolvedOptions;
     Intl.DateTimeFormat.prototype.resolvedOptions = function () {
@@ -247,6 +247,7 @@ pub const PROBE_JS: &str = r##"
     screen: [screen.width, screen.height, screen.availWidth, screen.availHeight, screen.colorDepth],
     dpr: window.devicePixelRatio,
     outer: [window.outerWidth, window.outerHeight],
+    inner: [window.innerWidth, window.innerHeight],
     plugins: navigator.plugins.length,
     dnt: navigator.doNotTrack,
     cookieEnabled: navigator.cookieEnabled,

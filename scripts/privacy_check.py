@@ -77,10 +77,13 @@ def main(argv):
     )
     check("language list pinned", a["langs"] == "en-US,en", a["langs"])
     check("doNotTrack set", str(a["dnt"]) == "1", str(a["dnt"]))
+    # outerWidth can exceed screen.width by the invisible resize border Win32
+    # reports; the client area is the part that must actually fit.
+    inner = a.get("inner") or [0, 0]
     check(
-        "screen matches the real window",
-        a["screen"][0] >= a["outer"][0] and a["screen"][1] >= a["outer"][1],
-        f"screen {a['screen'][:2]} window {a['outer']}",
+        "client area fits the screen",
+        inner[0] <= a["screen"][0] and inner[1] <= a["screen"][1],
+        f"screen {a['screen'][:2]} inner {inner} outer {a['outer']}",
     )
     gl = a.get("webgl") or {}
     if gl.get("available"):
