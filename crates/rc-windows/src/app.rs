@@ -56,7 +56,11 @@ struct Tab {
     url: String,
     zoom: f64,
     scripts: Vec<String>,
-    pending: Option<String>,
+    /// The navigation the tab is supposed to end up on. `Some("")` means the
+    /// new-tab page. Kept until a load succeeds so a cancelled navigation can
+    /// be re-issued instead of leaving the tab blank.
+    wants: Option<String>,
+    retries: u8,
     loading: bool,
     is_new_tab: bool,
 }
@@ -244,7 +248,8 @@ impl App {
             url: url.clone(),
             zoom: self.prefs.zoom,
             scripts: Vec::new(),
-            pending: Some(url),
+            wants: Some(url),
+            retries: 0,
             loading: false,
             is_new_tab: false,
         });
@@ -303,8 +308,8 @@ impl App {
                 self.tabs[idx].webview = Some(created.webview);
                 self.reinstall_scripts(idx);
 
-                let pending = self.tabs[idx].pending.take();
-                if let Some(url) = pending {
+                let wants = self.tabs[idx].wants.clone();
+                if let Some(url) = wants {
                     if url.is_empty() {
                         self.show_new_tab(idx);
                     } else {
@@ -496,27 +501,54 @@ impl App {
     // ------------------------------------------------------------- navigation
 
     fn show_new_tab(&mut self, idx: usize) {
-        self.trace(&format!("tab {idx} show new tab page"));
         let Some(wv) = self.tabs.get(idx).and_then(|t| t.webview.clone()) else {
             return;
         };
         let html = pages::new_tab_html(&self.prefs.engine, self.prefs.is_dark());
+        self.tabs[idx].wants = Some(String::new());
         self.tabs[idx].url.clear();
         self.tabs[idx].is_new_tab = true;
         self.tabs[idx].title = "New Tab".to_string();
-        unsafe {
-            let _ = wv.NavigateToString(&HSTRING::from(html));
-        }
+        let hr = unsafe { wv.NavigateToString(&HSTRING::from(html)) };
+        self.trace(&format!(
+            "tab {} new tab page: {:?}",
+            self.tabs[idx].id, hr.is_ok()
+        ));
     }
 
     fn load_in(&mut self, idx: usize, url: &str) {
         let Some(wv) = self.tabs.get(idx).and_then(|t| t.webview.clone()) else {
             return;
         };
+        self.tabs[idx].wants = Some(url.to_string());
         self.tabs[idx].url = url.to_string();
         self.tabs[idx].is_new_tab = false;
-        unsafe {
-            let _ = wv.Navigate(&HSTRING::from(url));
+        let hr = unsafe { wv.Navigate(&HSTRING::from(url)) };
+        self.trace(&format!(
+            "tab {} navigate {url}: {:?}",
+            self.tabs[idx].id,
+            hr.is_ok()
+        ));
+    }
+
+    /// A cancelled navigation leaves the tab on about:blank. Re-issue the
+    /// intended target a bounded number of times.
+    fn retry_navigation(&mut self, idx: usize) {
+        let wants = self.tabs[idx].wants.clone();
+        let Some(target) = wants else { return };
+        if self.tabs[idx].retries >= 2 {
+            self.trace(&format!("tab {} giving up after 2 retries", self.tabs[idx].id));
+            return;
+        }
+        self.tabs[idx].retries += 1;
+        self.trace(&format!(
+            "tab {} retry {}: {:?}",
+            self.tabs[idx].id, self.tabs[idx].retries, target
+        ));
+        if target.is_empty() {
+            self.show_new_tab(idx);
+        } else {
+            self.load_in(idx, &target);
         }
     }
 
@@ -529,7 +561,7 @@ impl App {
         if let Some(t) = self.tabs.get(idx) {
             if t.webview.is_none() {
                 if let Some(t) = self.tabs.get_mut(idx) {
-                    t.pending = Some(url);
+                    t.wants = Some(url);
                 }
                 return;
             }
@@ -575,6 +607,14 @@ impl App {
         // is created and we immediately load a page. That is not a failure, and
         // it must not produce an error page or fail the smoke test.
         let canceled = status == COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED.0;
+        if let Some(idx) = self.tabs.iter().position(|t| t.id == id) {
+            if ok {
+                self.tabs[idx].wants = None;
+                self.tabs[idx].retries = 0;
+            } else if canceled && self.tabs[idx].wants.is_some() {
+                self.retry_navigation(idx);
+            }
+        }
         if !ok && !canceled {
             if let Some(idx) = self.tabs.iter().position(|t| t.id == id) {
                 let url = self.tabs[idx].url.clone();
