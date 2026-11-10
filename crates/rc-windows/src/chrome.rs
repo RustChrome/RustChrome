@@ -32,6 +32,23 @@ pub struct Msg {
     pub back: Option<bool>,
     #[serde(default)]
     pub which: Option<String>,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub template: Option<String>,
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub allow: Option<bool>,
+    #[serde(default)]
+    pub index: Option<usize>,
+}
+
+impl Msg {
+    /// A free-text field that doubles as a path for the bookmark importer.
+    pub fn path_or_text(&self) -> Option<String> {
+        self.text.clone().filter(|t| !t.trim().is_empty())
+    }
 }
 
 pub fn load(webview: &ICoreWebView2) {

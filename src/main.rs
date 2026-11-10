@@ -409,6 +409,14 @@ fn load_antifp() -> bool {
 }
 
 /// Strict mode denies WebGL and removes WebRTC instead of coercing them.
+/// A clean exit must not look like a crash to the next run.
+fn mark_session_clean() {
+    let mut s = rc_core::features::SessionState::load();
+    s.dirty = false;
+    s.tabs.clear();
+    let _ = s.save();
+}
+
 fn load_strict() -> bool {
     get_pref("strict").unwrap_or(false)
 }
@@ -627,7 +635,14 @@ impl App {
         // Ephemeral context: cookies, cache, localStorage, IndexedDB and
         // service workers live in memory and never reach the disk, so a crash
         // or a kill cannot leave a session behind.
-        let ctx = WebContext::new_ephemeral();
+        // Private Session (default): nothing is written to disk. Standard
+        // Session reuses WebKit's persistent context so logins survive.
+        let keep_session = rc_core::store::Prefs::load().keep_session;
+        let ctx = if keep_session {
+            WebContext::default().unwrap_or_else(WebContext::new_ephemeral)
+        } else {
+            WebContext::new_ephemeral()
+        };
         ctx.set_preferred_languages(&["en-US", "en"]);
         if let Some(cm) = ctx.cookie_manager() {
             cm.set_accept_policy(CookieAcceptPolicy::NoThirdParty);
@@ -814,9 +829,13 @@ impl App {
 
         {
             self.window.connect_delete_event(move |w, _| {
-                if get_pref("autoclear").unwrap_or(true) {
+                let keep = rc_core::store::Prefs::load().keep_session;
+                if !keep && get_pref("autoclear").unwrap_or(true) {
                     w.hide();
-                    clear_session_data(|| std::process::exit(0));
+                    clear_session_data(|| {
+                        mark_session_clean();
+                        std::process::exit(0);
+                    });
                     return gtk::glib::Propagation::Stop;
                 }
                 gtk::glib::Propagation::Proceed
@@ -841,7 +860,11 @@ impl App {
                         a.entry.select_region(0, -1);
                     }
                     (true, _, "r") | (true, _, "R") | (false, _, "F5") => a.with_current(|v| v.reload()),
-                    (true, _, "q") => std::process::exit(0),
+                    (true, _, "q") => {
+                        mark_session_clean();
+                        std::process::exit(0);
+                    }
+                    (true, _, "A") if shift => a.tab_search_dialog(),
                     (true, _, "f") | (true, _, "F") => a.show_find(),
                     (false, _, "Escape") => a.hide_find(),
                     (true, _, "d") | (true, _, "D") => a.toggle_bookmark(),
@@ -881,10 +904,20 @@ impl App {
             self.findbar.hide();
             return;
         }
-        let start = std::env::var("RUSTCHROME_START_URL").unwrap_or_else(|_| HOME.to_string());
-        for u in start.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
-            self.new_tab(u);
+        let prefs = rc_core::store::Prefs::load();
+        let prev = rc_core::features::SessionState::load();
+        if prefs.restore_session && rc_core::features::crashed(&prev) {
+            for u in prev.tabs.iter().take(20) {
+                self.new_tab(u);
+            }
+        } else {
+            let start =
+                std::env::var("RUSTCHROME_START_URL").unwrap_or_else(|_| HOME.to_string());
+            for u in start.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
+                self.new_tab(u);
+            }
         }
+        self.persist_session();
         self.window.show_all();
         if let Ok(z) = std::env::var("RUSTCHROME_UI_ZOOM") {
             if let Ok(z) = z.parse::<f64>() {
@@ -1369,6 +1402,217 @@ impl App {
              <table><tr><th>Name</th><th>URL</th></tr>{}</table></body></html>",
             rows
         )
+    }
+
+    /// Mirror the open tabs into the shared session file so a crash can be
+    /// recovered and a clean exit can clear it.
+    fn persist_session(&self) {
+        let urls: Vec<String> = self
+            .tabs
+            .borrow()
+            .iter()
+            .map(|t| t.uri.borrow().clone())
+            .filter(|u| !u.is_empty())
+            .collect();
+        if urls.is_empty() {
+            return;
+        }
+        let mut s = rc_core::features::SessionState::load();
+        s.tabs = urls;
+        s.active = self.active.get();
+        s.dirty = true;
+        let _ = s.save();
+    }
+
+    fn import_bookmarks_dialog(&self) {
+        let dlg = gtk::FileChooserDialog::with_buttons(
+            Some("Import bookmarks"),
+            Some(&self.window),
+            gtk::FileChooserAction::Open,
+            &[
+                ("Cancel", gtk::ResponseType::Cancel),
+                ("Import", gtk::ResponseType::Accept),
+            ],
+        );
+        let filter = gtk::FileFilter::new();
+        filter.set_name(Some("Bookmarks (HTML or Chrome JSON)"));
+        filter.add_pattern("*.html");
+        filter.add_pattern("*.htm");
+        filter.add_pattern("*");
+        dlg.add_filter(filter);
+        let a = self.rc();
+        dlg.connect_response(move |d, resp| {
+            if resp == gtk::ResponseType::Accept {
+                if let Some(path) = d.filename() {
+                    match rc_core::features::parse_bookmarks_file(&path) {
+                        Ok(items) => {
+                            // The GTK shell has its own Bookmark type; convert,
+                            // merge with the shared code, convert back.
+                            let mut merged: Vec<rc_core::store::Bookmark> = a
+                                .bookmarks
+                                .borrow()
+                                .iter()
+                                .map(|b| rc_core::store::Bookmark {
+                                    title: b.title.clone(),
+                                    url: b.url.clone(),
+                                })
+                                .collect();
+                            let (added, skipped) =
+                                rc_core::features::merge_bookmarks(&mut merged, items);
+                            {
+                                let mut bm = a.bookmarks.borrow_mut();
+                                bm.clear();
+                                for b in merged {
+                                    bm.push(Bookmark { title: b.title, url: b.url });
+                                }
+                                let _ = rc_core::store::save_bookmarks(
+                                    &bm.iter()
+                                        .map(|b| rc_core::store::Bookmark {
+                                            title: b.title.clone(),
+                                            url: b.url.clone(),
+                                        })
+                                        .collect::<Vec<_>>(),
+                                );
+                            }
+                            a.refresh_bookmarks_bar();
+                            a.info(&format!(
+                                "Imported {added} bookmark(s), skipped {skipped} duplicate(s)."
+                            ));
+                        }
+                        Err(e) => a.info(&format!("Import failed: {e}")),
+                    }
+                }
+            }
+            d.close();
+        });
+        dlg.show_all();
+    }
+
+    fn export_bookmarks(&self) {
+        let dest = rc_core::downloads_dir().join("rustchrome-bookmarks.html");
+        let bookmarks: Vec<rc_core::store::Bookmark> = self
+            .bookmarks
+            .borrow()
+            .iter()
+            .map(|b| rc_core::store::Bookmark {
+                title: b.title.clone(),
+                url: b.url.clone(),
+            })
+            .collect();
+        let html = rc_core::features::export_netscape(&bookmarks);
+        match std::fs::write(&dest, html) {
+            Ok(()) => self.info(&format!("Exported bookmarks to {}", dest.display())),
+            Err(e) => self.info(&format!("Export failed: {e}")),
+        }
+    }
+
+    fn info(&self, text: &str) {
+        let dlg = gtk::MessageDialog::new(
+            Some(&self.window),
+            gtk::DialogFlags::MODAL,
+            gtk::MessageType::Info,
+            gtk::ButtonsType::Ok,
+            text,
+        );
+        dlg.connect_response(|d, _| d.close());
+        dlg.show();
+    }
+
+    /// Ctrl+Shift+A: filter open tabs by title or address and switch to one.
+    fn tab_search_dialog(&self) {
+        let dlg = gtk::Dialog::with_buttons(
+            Some("Search tabs"),
+            Some(&self.window),
+            gtk::DialogFlags::MODAL,
+            &[("Close", gtk::ResponseType::Close)],
+        );
+        dlg.set_default_size(460, 340);
+        let area = dlg.content_area();
+        let entry = Entry::new();
+        entry.set_placeholder_text(Some("Search tabs by title or address"));
+        area.pack_start(&entry, false, false, 6);
+        let list = GtkBox::new(Orientation::Vertical, 2);
+        area.pack_start(&list, true, true, 0);
+
+        let rebuild = {
+            let a = self.rc();
+            let list = list.clone();
+            let dlg = dlg.clone();
+            move |query: &str| {
+                for child in list.children() {
+                    list.remove(&child);
+                }
+                let pairs: Vec<(String, String)> = a
+                    .tabs
+                    .borrow()
+                    .iter()
+                    .map(|t| (t.title.borrow().clone(), t.uri.borrow().clone()))
+                    .collect();
+                for idx in rc_core::features::match_tabs(query, &pairs).into_iter().take(12) {
+                    let (title, uri) = pairs[idx].clone();
+                    let label = if title.is_empty() { uri.clone() } else { title };
+                    let btn = Button::with_label(&format!("{label}  —  {uri}"));
+                    btn.set_relief(gtk::ReliefStyle::None);
+                    btn.style_context().add_class("tablabel");
+                    let a2 = a.clone();
+                    let dlg2 = dlg.clone();
+                    btn.connect_clicked(move |_| {
+                        if let Some(t) = a2.tabs.borrow().get(idx).cloned() {
+                            a2.activate(&t);
+                        }
+                        dlg2.close();
+                    });
+                    list.pack_start(&btn, false, false, 0);
+                    btn.show();
+                }
+            }
+        };
+        rebuild("");
+        {
+            let rebuild = rebuild.clone();
+            entry.connect_changed(move |e| rebuild(&e.text()));
+        }
+        area.show_all();
+        let rebuild = rebuild.clone();
+        dlg.connect_response(move |d, _| {
+            d.close();
+            let _ = &rebuild;
+        });
+        dlg.show();
+        entry.grab_focus();
+    }
+
+    fn recently_closed_dialog(&self) {
+        let urls: Vec<String> = self.closed.borrow().iter().rev().cloned().collect();
+        if urls.is_empty() {
+            self.info("Nothing has been closed in this session.");
+            return;
+        }
+        let dlg = gtk::Dialog::with_buttons(
+            Some("Recently closed"),
+            Some(&self.window),
+            gtk::DialogFlags::MODAL,
+            &[("Close", gtk::ResponseType::Close)],
+        );
+        dlg.set_default_size(520, 320);
+        let area = dlg.content_area();
+        let list = GtkBox::new(Orientation::Vertical, 2);
+        area.pack_start(&list, true, true, 0);
+        for url in urls {
+            let btn = Button::with_label(&url);
+            btn.set_relief(gtk::ReliefStyle::None);
+            let a = self.rc();
+            let dlg2 = dlg.clone();
+            let u = url.clone();
+            btn.connect_clicked(move |_| {
+                a.new_tab(&u);
+                dlg2.close();
+            });
+            list.pack_start(&btn, false, false, 0);
+        }
+        area.show_all();
+        dlg.connect_response(|d, _| d.close());
+        dlg.show();
     }
 
     fn install_userscript_dialog(&self) {
@@ -1873,6 +2117,26 @@ impl App {
                 }
             });
         }
+        let mi_import = add("Import bookmarks…");
+        {
+            let a = self.rc();
+            mi_import.connect_activate(move |_| a.import_bookmarks_dialog());
+        }
+        let mi_export = add("Export bookmarks");
+        {
+            let a = self.rc();
+            mi_export.connect_activate(move |_| a.export_bookmarks());
+        }
+        let mi_tabs = add("Search tabs…  (Ctrl+Shift+A)");
+        {
+            let a = self.rc();
+            mi_tabs.connect_activate(move |_| a.tab_search_dialog());
+        }
+        let mi_closed = add("Recently closed…");
+        {
+            let a = self.rc();
+            mi_closed.connect_activate(move |_| a.recently_closed_dialog());
+        }
         let mi_strict = add(if self.strict.get() { "Strict mode: on" } else { "Strict mode: off" });
         {
             let a = self.rc();
@@ -1943,6 +2207,11 @@ impl App {
         menu.append(&mi_ext);
         menu.append(&mi_ext_add);
         menu.append(&mi_privacy);
+        menu.append(&mi_tabs);
+        menu.append(&mi_closed);
+        menu.append(&gtk::SeparatorMenuItem::new());
+        menu.append(&mi_import);
+        menu.append(&mi_export);
         menu.append(&gtk::SeparatorMenuItem::new());
         menu.append(&mi_newid);
         menu.append(&mi_autoclear);

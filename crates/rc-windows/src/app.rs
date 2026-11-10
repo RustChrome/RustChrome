@@ -5,10 +5,12 @@
 //! anyway. Handlers capture a tab id, never `self`.
 
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use rc_core::dashboard::{Dashboard, Row};
+use rc_core::features::{self, SessionState};
 use rc_core::privacy::SessionSeed;
 use rc_core::store::{self, Bookmark, Prefs};
 use serde_json::{json, Value};
@@ -77,7 +79,14 @@ pub struct App {
     pub tabs: Vec<Tab>,
     pub active: usize,
     pub next_id: u64,
-    pub closed: Vec<String>,
+    pub session: SessionState,
+    pub tab_search_open: bool,
+    pub tab_search_query: String,
+    pub sites: Vec<rc_core::features::SiteRule>,
+    /// Live download operations, so the UI can cancel them.
+    pub dl_ops: Vec<(u64, ICoreWebView2DownloadOperation)>,
+    /// One-shot message shown as a toast in the UI.
+    pub notice: Option<String>,
     pub bookmarks: Vec<Bookmark>,
     pub downloads: Vec<downloads::Item>,
     pub next_dl: u64,
@@ -113,7 +122,12 @@ impl App {
             tabs: Vec::new(),
             active: 0,
             next_id: 1,
-            closed: Vec::new(),
+            session: SessionState::load(),
+            tab_search_open: false,
+            tab_search_query: String::new(),
+            sites: features::load_sites(),
+            dl_ops: Vec::new(),
+            notice: None,
             bookmarks: store::load_bookmarks(),
             downloads: Vec::new(),
             next_dl: 1,
@@ -130,8 +144,16 @@ impl App {
         }
     }
 
-    /// Kick off the UI webview and the first tab.
+    /// Kick off the UI webview and the first tab. If the previous run ended
+    /// badly, the tabs it had are restored first.
     pub fn boot(&mut self) {
+        let prev = self.session.clone();
+        if self.prefs.restore_session && features::crashed(&prev) {
+            self.trace(&format!("restoring {} tab(s) after a crash", prev.tabs.len()));
+            for url in prev.tabs.iter().take(20) {
+                self.new_tab(Some(url.clone()), true);
+            }
+        }
         self.trace(&format!("boot: hwnd={:?} runtime={}", self.hwnd.0, self.runtime));
         window::apply_frame_theme(self.hwnd, self.prefs.is_dark());
         let env = self.env.clone();
@@ -439,9 +461,26 @@ impl App {
             let _ = wv.add_NewWindowRequested(&h, &mut t);
 
             // -- permissions: deny everything, like the Linux build
+            // Deny unless the user has an explicit per-site allow rule.
             let h = PermissionRequestedEventHandler::create(Box::new(|_s, args| {
                 if let Some(args) = args {
-                    let _ = args.SetState(COREWEBVIEW2_PERMISSION_STATE_DENY);
+                    let mut p = PWSTR::null();
+                    let uri = if args.Uri(&mut p).is_ok() {
+                        webview::take(p)
+                    } else {
+                        String::new()
+                    };
+                    let mut kind = COREWEBVIEW2_PERMISSION_KIND(0);
+                    let _ = args.PermissionKind(&mut kind);
+                    let allow = with_app_value(|a| {
+                        features::site_decision(&a.sites, &uri, permission_name(kind)) == Some(true)
+                    })
+                    .unwrap_or(false);
+                    let _ = args.SetState(if allow {
+                        COREWEBVIEW2_PERMISSION_STATE_ALLOW
+                    } else {
+                        COREWEBVIEW2_PERMISSION_STATE_DENY
+                    });
                 }
                 Ok(())
             }));
@@ -782,6 +821,7 @@ impl App {
                 t.is_new_tab = false;
             }
         }
+        self.persist_session();
         self.push_state();
     }
 
@@ -876,10 +916,7 @@ impl App {
         };
         let tab = self.tabs.remove(idx);
         if !tab.url.is_empty() {
-            self.closed.push(tab.url);
-            if self.closed.len() > 10 {
-                self.closed.remove(0);
-            }
+            self.session.push_closed(&tab.url);
         }
         if let Some(c) = &tab.controller {
             unsafe {
@@ -896,11 +933,12 @@ impl App {
             let id = self.tabs[self.active].id;
             self.activate(id);
         }
+        self.persist_session();
         self.push_state();
     }
 
     fn reopen_closed(&mut self) {
-        if let Some(url) = self.closed.pop() {
+        if let Some(url) = self.session.take_closed() {
             self.new_tab(Some(url), true);
         }
     }
@@ -1054,6 +1092,7 @@ impl App {
         // Attach progress/state reporting.
         unsafe {
             if let Ok(op) = unsafe { args.DownloadOperation() } {
+                self.dl_ops.push((id, op.clone()));
                 let h = webview2_com::BytesReceivedChangedEventHandler::create(Box::new(
                     move |sender, _a| {
                         if let Some(op) = sender {
@@ -1139,6 +1178,143 @@ impl App {
 
     // ------------------------------------------------------------------- ui io
 
+    fn tab_search_hits(&self) -> Vec<u64> {
+        let pairs: Vec<(String, String)> = self
+            .tabs
+            .iter()
+            .map(|t| (t.title.clone(), t.url.clone()))
+            .collect();
+        features::match_tabs(&self.tab_search_query, &pairs)
+            .into_iter()
+            .filter_map(|i| self.tabs.get(i).map(|t| t.id))
+            .collect()
+    }
+
+    fn import_bookmarks(&mut self, path: Option<String>) {
+        let source = match path {
+            Some(p) => PathBuf::from(p.trim().trim_matches('"')),
+            None => match features::chrome_bookmarks_path() {
+                Some(p) => p,
+                None => {
+                    self.notice =
+                        Some("No Chrome profile found. Paste a bookmarks file path.".into());
+                    self.push_state();
+                    return;
+                }
+            },
+        };
+        match features::parse_bookmarks_file(&source) {
+            Ok(items) => {
+                let (added, skipped) =
+                    features::merge_bookmarks(&mut self.bookmarks, items);
+                let _ = store::save_bookmarks(&self.bookmarks);
+                self.notice = Some(format!(
+                    "Imported {added} bookmark(s), skipped {skipped} duplicate(s) from {}",
+                    source.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()
+                ));
+            }
+            Err(e) => self.notice = Some(format!("Import failed: {e}")),
+        }
+        self.push_state();
+    }
+
+    fn export_bookmarks(&mut self) {
+        let dest = downloads::downloads_dir().join("rustchrome-bookmarks.html");
+        let html = features::export_netscape(&self.bookmarks);
+        match std::fs::write(&dest, html) {
+            Ok(()) => {
+                self.notice = Some(format!("Exported {} bookmark(s) to {}", self.bookmarks.len(), dest.display()));
+                downloads::reveal(&dest.to_string_lossy());
+            }
+            Err(e) => self.notice = Some(format!("Export failed: {e}")),
+        }
+        self.push_state();
+    }
+
+    fn add_engine(&mut self, label: &str, template: &str) {
+        let Some(t) = features::normalize_engine_template(template) else {
+            self.notice = Some("Search engine template must be an http(s) URL containing {q}".into());
+            self.push_state();
+            return;
+        };
+        let label = if label.trim().is_empty() { "Custom" } else { label.trim() };
+        let id = format!(
+            "custom-{}",
+            label.to_ascii_lowercase().replace(|c: char| !c.is_alphanumeric(), "-")
+        );
+        self.prefs.engines.retain(|e| e.id != id);
+        self.prefs.engines.push(features::CustomEngine {
+            id: id.clone(),
+            label: label.to_string(),
+            template: t,
+        });
+        let _ = self.prefs.save();
+        self.notice = Some(format!("Added search engine {label}"));
+        self.push_state();
+    }
+
+    fn remove_engine(&mut self, idx: usize) {
+        if idx < self.prefs.engines.len() {
+            let removed = self.prefs.engines.remove(idx);
+            if self.prefs.engine == removed.id {
+                self.prefs.engine = "google".to_string();
+            }
+            let _ = self.prefs.save();
+        }
+        self.push_state();
+    }
+
+    fn add_site_rule(&mut self, host: &str, kind: &str, allow: bool) {
+        let host = host.trim().to_ascii_lowercase();
+        let host = features::host_of(&format!("https://{host}")).unwrap_or(host);
+        if host.is_empty() {
+            self.notice = Some("Site rule needs a host name".into());
+            self.push_state();
+            return;
+        }
+        self.sites.retain(|r| !(r.host == host && r.kind == kind));
+        self.sites.push(features::SiteRule {
+            host: host.clone(),
+            kind: kind.to_string(),
+            allow,
+        });
+        let _ = features::save_sites(&self.sites);
+        self.notice = Some(format!(
+            "{} {} for {host}",
+            if allow { "Allowed" } else { "Denied" },
+            kind
+        ));
+        self.push_state();
+    }
+
+    fn cancel_download(&mut self, id: u64) {
+        if let Some((_, op)) = self.dl_ops.iter().find(|(i, _)| *i == id) {
+            unsafe {
+                let _ = op.Cancel();
+            }
+        }
+        self.push_state();
+    }
+
+    /// Mirror the live tab set into `session.json`. Cheap (a few hundred
+    /// bytes) and called on every change, which is what makes crash recovery
+    /// accurate without a timer.
+    fn persist_session(&mut self) {
+        let urls: Vec<String> = self
+            .tabs
+            .iter()
+            .map(|t| t.url.clone())
+            .filter(|u| !u.is_empty())
+            .collect();
+        if urls.is_empty() {
+            return;
+        }
+        self.session.tabs = urls;
+        self.session.active = self.active;
+        self.session.dirty = true;
+        let _ = self.session.save();
+    }
+
     pub fn push_state(&self) {
         let Some(ch) = &self.chrome else { return };
         let json = self.snapshot().to_string();
@@ -1207,9 +1383,43 @@ impl App {
             })
             .collect();
 
-        let engines: Vec<Value> = rc_core::SEARCH_ENGINES
+        let mut engines: Vec<Value> = rc_core::SEARCH_ENGINES
             .iter()
             .map(|e| json!({ "id": e.0, "label": e.1 }))
+            .collect();
+        let custom: Vec<Value> = self
+            .prefs
+            .engines
+            .iter()
+            .enumerate()
+            .map(|(i, e)| json!({ "id": e.id, "label": e.label, "custom": true, "index": i }))
+            .collect();
+        for c in &custom {
+            engines.push(c.clone());
+        }
+
+        let closed: Vec<Value> = self
+            .session
+            .closed
+            .iter()
+            .rev()
+            .map(|u| json!({ "url": u }))
+            .collect();
+        let hits: Vec<Value> = self
+            .tab_search_hits()
+            .iter()
+            .enumerate()
+            .filter_map(|(i, id)| {
+                self.tabs.iter().find(|t| t.id == *id).map(|t| {
+                    json!({ "index": i, "id": t.id, "title": if t.title.is_empty() { "New Tab" } else { t.title.as_str() }, "url": t.url })
+                })
+            })
+            .collect();
+        let site_rules: Vec<Value> = self
+            .sites
+            .iter()
+            .enumerate()
+            .map(|(i, r)| json!({ "index": i, "host": r.host, "kind": r.kind, "allow": r.allow }))
             .collect();
 
         let engine_label = rc_core::SEARCH_ENGINES
@@ -1242,6 +1452,11 @@ impl App {
             },
             "version": env!("CARGO_PKG_VERSION"),
             "runtime": self.runtime,
+            "closed": closed,
+            "tabsearch": { "open": self.tab_search_open, "query": self.tab_search_query, "hits": hits },
+            "site_rules": site_rules,
+            "custom_engines": custom,
+            "notice": self.notice,
             "downloads_dir": downloads::downloads_dir().to_string_lossy(),
             "userscripts_dir": store::userscript_dir().to_string_lossy(),
         })
@@ -1268,6 +1483,69 @@ impl App {
                 }
             }
             "reopen" => self.reopen_closed(),
+            "reopenat" => {
+                if let Some(i) = msg.index {
+                    if let Some(url) = self.session.closed.get(i).cloned() {
+                        self.session.closed.remove(i);
+                        self.new_tab(Some(url), true);
+                    }
+                }
+            }
+            "clearsession" => {
+                self.session.closed.clear();
+                let _ = self.session.save();
+                self.push_state();
+            }
+            "tabsearch" => {
+                self.tab_search_open = true;
+                self.tab_search_query = msg.text.unwrap_or_default();
+                self.push_state();
+            }
+            "tabsearchclose" => {
+                self.tab_search_open = false;
+                self.tab_search_query.clear();
+                self.push_state();
+            }
+            "tabsearchpick" => {
+                if let Some(i) = msg.index {
+                    let hits = self.tab_search_hits();
+                    if let Some(id) = hits.get(i).copied() {
+                        self.tab_search_open = false;
+                        self.tab_search_query.clear();
+                        self.activate(id);
+                    }
+                }
+            }
+            "importbookmarks" => self.import_bookmarks(msg.path_or_text()),
+            "exportbookmarks" => self.export_bookmarks(),
+            "addengine" => {
+                let label = msg.label.unwrap_or_default();
+                let template = msg.template.unwrap_or_default();
+                self.add_engine(&label, &template);
+            }
+            "removeengine" => {
+                if let Some(i) = msg.index {
+                    self.remove_engine(i);
+                }
+            }
+            "addrule" => {
+                let host = msg.text.unwrap_or_default();
+                let kind = msg.kind.unwrap_or_else(|| "camera".into());
+                let allow = msg.allow.unwrap_or(true);
+                self.add_site_rule(&host, &kind, allow);
+            }
+            "removerule" => {
+                if let Some(i) = msg.index {
+                    self.sites.remove(i);
+                    let _ = features::save_sites(&self.sites);
+                    self.push_state();
+                }
+            }
+            "canceldownload" => {
+                if let Some(id) = msg.id {
+                    self.cancel_download(id);
+                }
+            }
             "back" => self.with_active(|wv| unsafe { let _ = wv.GoBack(); }),
             "forward" => self.with_active(|wv| unsafe { let _ = wv.GoForward(); }),
             "reload" => self.with_active(|wv| unsafe { let _ = wv.Reload(); }),
@@ -1386,7 +1664,7 @@ impl App {
         for id in ids {
             self.close_tab(id);
         }
-        self.closed.clear();
+        self.session.closed.clear();
         self.bookmarks = store::load_bookmarks();
         self.downloads.clear();
         self.find_open = false;
@@ -1615,6 +1893,30 @@ impl App {
     }
 }
 
+fn with_app_value<T, F: FnOnce(&mut App) -> T>(f: F) -> Option<T> {
+    let mut out = None;
+    with_app(|a| out = Some(f(a)));
+    out
+}
+
+/// Permission kinds as stable names, used by the per-site rules.
+fn permission_name(kind: COREWEBVIEW2_PERMISSION_KIND) -> &'static str {
+    match kind.0 {
+        1 => "microphone",
+        2 => "camera",
+        3 => "geolocation",
+        4 => "notifications",
+        5 => "sensors",
+        6 => "clipboard",
+        7 => "downloads",
+        8 => "files",
+        9 => "autoplay",
+        10 => "midi",
+        11 => "windows",
+        _ => "unknown",
+    }
+}
+
 fn with_app_handled<F: FnOnce(&mut App) -> bool>(f: F) -> bool {
     let mut out = false;
     with_app(|a| out = f(a));
@@ -1776,6 +2078,14 @@ fn run_shutdown(hwnd: HWND) {
             }
         }
     }
+
+    // A clean exit: the session is no longer "dirty", so the next start does
+    // not treat this as a crash.
+    with_app(|a| {
+        a.session.dirty = false;
+        a.session.tabs.clear();
+        let _ = a.session.save();
+    });
 
     for c in controllers {
         unsafe {
