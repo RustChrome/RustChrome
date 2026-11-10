@@ -260,7 +260,7 @@ pub const MAX_CLOSED: usize = 20;
 
 impl SessionState {
     pub fn path() -> PathBuf {
-        store::data_dir().join("session.json")
+        crate::data_dir().join("session.json")
     }
 
     pub fn load() -> Self {
@@ -376,7 +376,7 @@ pub struct SiteRule {
 }
 
 pub fn sites_path() -> PathBuf {
-    store::data_dir().join("sites.json")
+    crate::data_dir().join("sites.json")
 }
 
 pub fn load_sites() -> Vec<SiteRule> {
