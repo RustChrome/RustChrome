@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::store::{self, Bookmark};
+use crate::store::Bookmark;
 
 // ---------------------------------------------------------------- bookmarks
 

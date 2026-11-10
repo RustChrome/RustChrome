@@ -242,9 +242,11 @@ mod tests {
     #[test]
     fn prefs_roundtrip_keeps_unrelated_keys() {
         // The old shell reset anti-fingerprinting whenever the theme changed.
-        let mut p = Prefs::default();
-        p.antifp = false;
-        p.engine = "google".into();
+        let mut p = Prefs {
+            antifp: false,
+            engine: "google".into(),
+            ..Default::default()
+        };
         p.set_json("theme", &serde_json::json!("dark"));
         assert_eq!(p.theme, "dark");
         assert!(!p.antifp, "toggling the theme must not reset anti-fingerprinting");
