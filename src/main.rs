@@ -93,6 +93,24 @@ const BOOKMARKS_PAGE: &str = "about:rustchrome-bookmarks";
 const PRIVACY_PAGE: &str = "about:rustchrome-privacy";
 
 /// RUSTCHROME_PROBE=<file>: load the probe page, dump its report, exit.
+/// Reported once, on the first finished load, so the QA workflow can measure
+/// startup without guessing.
+static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+static STARTUP_LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn log_startup_once() {
+    use std::io::Write;
+    if STARTUP_LOGGED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    let (Some(start), Ok(path)) = (START.get(), std::env::var("RUSTCHROME_STARTUP_LOG")) else {
+        return;
+    };
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(f, "startup_ms={}", start.elapsed().as_millis());
+    }
+}
+
 fn probe_path() -> Option<PathBuf> {
     std::env::var_os("RUSTCHROME_PROBE").map(PathBuf::from)
 }
@@ -1071,6 +1089,9 @@ impl App {
             let a = Rc::downgrade(&self.rc());
             let tw = Rc::downgrade(&tab);
             view.connect_load_changed(move |_, ev| {
+                if ev == LoadEvent::Finished {
+                    log_startup_once();
+                }
                 let (Some(a), Some(t)) = (a.upgrade(), tw.upgrade()) else { return };
                 if a.index_of(&t) != a.active.get() {
                     return;
@@ -2294,6 +2315,7 @@ fn save_bookmarks(bm: &[Bookmark]) {
 }
 
 fn main() {
+    let _ = START.set(std::time::Instant::now());
     {
         let path = data_dir().join("crash.log");
         std::panic::set_hook(Box::new(move |info| {

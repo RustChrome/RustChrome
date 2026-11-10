@@ -28,6 +28,8 @@ use windows::Win32::UI::HiDpi::{
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 fn main() {
+    // First thing in the process: the startup measurement is relative to this.
+    let _ = app::STARTUP.set(std::time::Instant::now());
     unsafe {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
@@ -62,7 +64,8 @@ fn run(smoke: bool, probe: Option<String>) -> Result<(), String> {
             .to_string()
     })?;
 
-    if !smoke && probe.is_none() {
+    let compat = std::env::var_os("RUSTCHROME_COMPAT").is_some();
+    if !smoke && probe.is_none() && !compat {
         ensure_single_instance();
     }
 

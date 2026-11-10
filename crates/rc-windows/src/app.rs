@@ -29,6 +29,9 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::{chrome, downloads, pages, privacy, webview, window};
 
+/// Process start, for the startup measurement.
+pub static STARTUP: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
 // ---------------------------------------------------------------- global state
 
 thread_local! {
@@ -103,6 +106,11 @@ pub struct App {
     pub ua: String,
     /// `--privacy-probe <path>`: run the probe once and write the report there.
     pub probe: Option<String>,
+    /// `RUSTCHROME_COMPAT`: load a fixed list of sites, record the outcome and
+    /// exit. Used by the QA workflow to check real-world compatibility.
+    pub compat: Option<String>,
+    pub compat_queue: Vec<String>,
+    pub compat_results: Vec<Value>,
 }
 
 impl App {
@@ -141,6 +149,18 @@ impl App {
             seed: SessionSeed::new(),
             ua,
             probe,
+            compat: std::env::var("RUSTCHROME_COMPAT").ok(),
+            compat_queue: if std::env::var("RUSTCHROME_COMPAT").is_ok() {
+                vec![
+                    "https://example.com/".to_string(),
+                    "https://en.wikipedia.org/wiki/WebKit".to_string(),
+                    "https://news.ycombinator.com/".to_string(),
+                    "https://www.rust-lang.org/".to_string(),
+                ]
+            } else {
+                Vec::new()
+            },
+            compat_results: Vec::new(),
         }
     }
 
@@ -148,7 +168,7 @@ impl App {
     /// badly, the tabs it had are restored first.
     pub fn boot(&mut self) {
         let prev = self.session.clone();
-        if self.prefs.restore_session && features::crashed(&prev) {
+        if self.compat.is_none() && self.prefs.restore_session && features::crashed(&prev) {
             self.trace(&format!("restoring {} tab(s) after a crash", prev.tabs.len()));
             for url in prev.tabs.iter().take(20) {
                 self.new_tab(Some(url.clone()), true);
@@ -592,6 +612,20 @@ impl App {
         self.push_state();
     }
 
+    fn finish_compat(&mut self) {
+        let Some(path) = self.compat.clone() else { return };
+        let body = serde_json::json!({
+            "total": self.compat_results.len(),
+            "ok": self.compat_results.iter().filter(|r| r["ok"] == true).count(),
+            "results": self.compat_results,
+        });
+        let _ = std::fs::write(path, serde_json::to_string_pretty(&body).unwrap_or_default());
+        self.closing = true;
+        unsafe {
+            let _ = DestroyWindow(self.hwnd);
+        }
+    }
+
     /// The probe page publishes its report as the document title, so this needs
     /// no script evaluation and behaves identically on both shells.
     fn run_probe(&mut self) {
@@ -732,6 +766,11 @@ impl App {
         let Some(wv) = self.tabs.get(idx).and_then(|t| t.webview.clone()) else {
             return;
         };
+        if let Some(first) = self.compat_queue.first().cloned() {
+            self.compat_queue.remove(0);
+            self.load_in(idx, &first);
+            return;
+        }
         let html = if self.probe.is_some() {
             rc_core::privacy::probe_html()
         } else {
@@ -866,8 +905,46 @@ impl App {
                 }
             }
         }
+        if ok && id == self.tabs.first().map(|t| t.id).unwrap_or(0) {
+            if let (Some(start), Ok(path)) = (
+                STARTUP.get(),
+                std::env::var("RUSTCHROME_STARTUP_LOG"),
+            ) {
+                use std::io::Write;
+                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path)
+                {
+                    let _ = writeln!(f, "startup_ms={}", start.elapsed().as_millis());
+                }
+            }
+        }
         if self.smoke && id == self.tabs.first().map(|t| t.id).unwrap_or(0) && (ok || !canceled) {
             self.finish_smoke(ok, status);
+        }
+        if self.compat.is_some()
+            && !canceled
+            && id == self.tabs.first().map(|t| t.id).unwrap_or(0)
+        {
+            let url = self.tabs.first().map(|t| t.url.clone()).unwrap_or_default();
+            let title = self.tabs.first().map(|t| t.title.clone()).unwrap_or_default();
+            let elapsed = STARTUP
+                .get()
+                .map(|s| s.elapsed().as_millis() as u64)
+                .unwrap_or(0);
+            self.compat_results.push(serde_json::json!({
+                "url": url,
+                "title": title,
+                "ok": ok,
+                "status": status,
+                "elapsed_ms": elapsed,
+            }));
+            if let Some(next) = self.compat_queue.first().cloned() {
+                self.compat_queue.remove(0);
+                self.load_in(0, &next);
+            } else {
+                self.finish_compat();
+            }
+            self.push_state();
+            return;
         }
         if ok
             && self.probe.is_some()
