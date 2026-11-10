@@ -465,7 +465,10 @@
     if (activeTab) activeTab.scrollIntoView({ block: "nearest", inline: "nearest" });
 
     const box = $("omnibox");
-    if (document.activeElement !== box && box.value !== s.url) box.value = s.url;
+    // Internal pages are data: URLs; showing that base64 in the omnibox is
+    // noise. The address bar shows a URL only for real pages.
+    const shown = s.url && !s.url.startsWith("data:") ? s.url : "";
+    if (document.activeElement !== box && box.value !== shown) box.value = shown;
     box.placeholder = "Search " + s.engine_label + " or type a URL";
     const secure = s.url.indexOf("https://") === 0;
     $("icon-lock").classList.toggle("hidden", !secure);
