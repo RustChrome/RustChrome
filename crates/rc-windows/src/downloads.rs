@@ -143,8 +143,13 @@ mod tests {
     fn traversal_is_neutralised() {
         let dir = std::env::temp_dir();
         let p = unique_path(&dir, "../../evil.exe");
+        // The file must land directly in `dir` and be a single path component:
+        // dots may survive inside the name, separators must not.
         assert_eq!(p.parent().unwrap(), dir);
-        assert!(!p.to_string_lossy().contains(".."));
+        let name = p.file_name().unwrap().to_string_lossy().to_string();
+        assert!(!name.contains('/') && !name.contains('\\'), "name = {name}");
+        assert_ne!(name, "..");
+        assert_ne!(name, ".");
     }
 
     #[test]
