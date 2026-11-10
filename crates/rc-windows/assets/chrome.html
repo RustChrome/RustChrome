@@ -1,0 +1,687 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="light dark">
+<title>RustChrome</title>
+<style>
+  :root {
+    --bg: #dee1e6;
+    --surface: #ffffff;
+    --surface-2: #f1f3f4;
+    --text: #202124;
+    --text-dim: #5f6368;
+    --border: #dadce0;
+    --hover: #cfd3d9;
+    --accent: #1a73e8;
+    --danger: #d93025;
+    --radius: 8px;
+  }
+  html.dark {
+    --bg: #202124;
+    --surface: #35363a;
+    --surface-2: #2d2f31;
+    --text: #e8eaed;
+    --text-dim: #9aa0a6;
+    --border: #4a4d51;
+    --hover: #4a4d51;
+    --accent: #8ab4f8;
+    --danger: #f28b82;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; overflow: hidden;
+    background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", system-ui, Arial, sans-serif;
+    font-size: 12px;
+    user-select: none;
+    cursor: default;
+  }
+  button {
+    font: inherit; color: inherit; background: transparent;
+    border: 0; padding: 0; cursor: default;
+  }
+  button:disabled { opacity: .35; }
+  svg { display: block; }
+
+  #chrome { display: flex; flex-direction: column; }
+
+  /* ---- tab strip ---- */
+  #tabstrip {
+    display: flex; align-items: flex-end; gap: 2px;
+    height: 38px; padding: 6px 6px 0 8px;
+  }
+  #tabs { display: flex; align-items: flex-end; gap: 2px; min-width: 0; overflow: hidden; }
+  .tab {
+    display: flex; align-items: center; gap: 6px;
+    height: 32px; padding: 0 4px 0 10px; max-width: 240px; min-width: 54px;
+    border-radius: 8px 8px 0 0; color: var(--text-dim);
+  }
+  .tab:hover { background: var(--hover); }
+  .tab.active { background: var(--surface); color: var(--text); }
+  .tab .title {
+    flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; font-size: 12px;
+  }
+  .tab .spinner {
+    width: 12px; height: 12px; border-radius: 50%;
+    border: 2px solid var(--border); border-top-color: var(--accent);
+    animation: spin .8s linear infinite; flex: 0 0 auto;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .tab .close {
+    width: 18px; height: 18px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-dim); flex: 0 0 auto;
+  }
+  .tab .close:hover { background: var(--border); color: var(--text); }
+  .tab:not(.active) .close { visibility: hidden; }
+  .tab:hover .close { visibility: visible; }
+
+  #newtab {
+    width: 28px; height: 28px; border-radius: 50%; margin: 0 0 2px 2px;
+    display: flex; align-items: center; justify-content: center; color: var(--text-dim);
+  }
+  #newtab:hover { background: var(--hover); color: var(--text); }
+
+  /* ---- toolbar ---- */
+  #toolbar {
+    display: flex; align-items: center; gap: 2px;
+    height: 40px; padding: 0 6px; background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+  .tb {
+    width: 30px; height: 30px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center; color: var(--text-dim);
+    flex: 0 0 auto;
+  }
+  .tb:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
+  #omnibox-wrap {
+    flex: 1; min-width: 0; margin: 0 6px;
+    display: flex; align-items: center;
+    background: var(--surface-2); border: 1px solid transparent; border-radius: 15px;
+    height: 28px; padding: 0 12px;
+  }
+  #omnibox-wrap:focus-within {
+    background: var(--surface); border-color: var(--accent);
+    box-shadow: 0 1px 6px rgba(32,33,36,.28);
+  }
+  #lock { color: var(--text-dim); margin-right: 8px; flex: 0 0 auto; }
+  #omnibox {
+    flex: 1; min-width: 0; border: 0; outline: 0; background: transparent;
+    color: var(--text); font-size: 13px; padding: 0;
+  }
+  #omnibox::placeholder { color: var(--text-dim); }
+  #star { color: var(--text-dim); }
+  #star.on { color: #f9ab00; }
+
+  /* ---- bookmarks bar ---- */
+  #bookmarks {
+    display: flex; align-items: center; gap: 2px;
+    height: 30px; padding: 0 8px; background: var(--surface);
+    border-bottom: 1px solid var(--border); overflow: hidden;
+  }
+  #bookmarks.hidden, #findbar.hidden, .hidden { display: none !important; }
+  .bm {
+    display: flex; align-items: center; gap: 6px;
+    max-width: 190px; height: 24px; padding: 0 8px; border-radius: 4px;
+    color: var(--text); font-size: 12px;
+  }
+  .bm:hover { background: var(--surface-2); }
+  .bm span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* ---- find bar ---- */
+  #findbar {
+    display: flex; align-items: center; gap: 6px;
+    height: 34px; padding: 0 10px; background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+  #findbar input {
+    width: 220px; height: 24px; border: 1px solid var(--border); border-radius: 4px;
+    background: var(--surface-2); color: var(--text); outline: 0; padding: 0 8px; font-size: 12px;
+  }
+  #findbar input:focus { border-color: var(--accent); }
+  #findcount { color: var(--text-dim); min-width: 48px; font-variant-numeric: tabular-nums; }
+  .fb {
+    width: 24px; height: 24px; border-radius: 4px;
+    display: flex; align-items: center; justify-content: center; color: var(--text-dim);
+  }
+  .fb:hover { background: var(--surface-2); color: var(--text); }
+
+  /* ---- overlays ---- */
+  #scrim {
+    position: fixed; inset: 0; background: rgba(0,0,0,.18); display: none;
+  }
+  #scrim.show { display: block; }
+
+  .panel {
+    position: fixed; z-index: 20; background: var(--surface);
+    border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: 0 8px 28px rgba(0,0,0,.28); overflow: hidden;
+  }
+  #menu { top: 80px; right: 8px; width: 280px; padding: 6px 0; }
+  .item {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    width: 100%; padding: 8px 16px; text-align: left; font-size: 13px;
+  }
+  .item:hover { background: var(--surface-2); }
+  .item .key { color: var(--text-dim); font-size: 11px; }
+  .sep { height: 1px; background: var(--border); margin: 6px 0; }
+
+  #panel-settings, #panel-downloads {
+    top: 80px; right: 8px; width: 420px; max-height: 70vh; overflow: auto;
+  }
+  .panel-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 18px 10px; font-size: 15px; font-weight: 600;
+  }
+  .row {
+    display: flex; align-items: center; justify-content: space-between; gap: 14px;
+    padding: 10px 18px; font-size: 13px;
+  }
+  .row .label { color: var(--text); }
+  .row .hint { color: var(--text-dim); font-size: 11px; margin-top: 2px; }
+  .row select {
+    background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 4px 8px; font: inherit;
+  }
+  .seg { display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .seg button { padding: 4px 12px; font-size: 12px; color: var(--text-dim); }
+  .seg button.on { background: var(--accent); color: #fff; }
+  .toggle {
+    width: 38px; height: 22px; border-radius: 11px; background: var(--border);
+    position: relative; transition: background .15s; flex: 0 0 auto;
+  }
+  .toggle::after {
+    content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px;
+    border-radius: 50%; background: #fff; transition: transform .15s;
+  }
+  .toggle.on { background: var(--accent); }
+  .toggle.on::after { transform: translateX(16px); }
+
+  .dl {
+    display: flex; align-items: center; gap: 10px; padding: 10px 18px;
+    border-top: 1px solid var(--border); font-size: 12px;
+  }
+  .dl .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dl .meta { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+  .link { color: var(--accent); text-decoration: underline; font-size: 12px; }
+  .empty { padding: 16px 18px; color: var(--text-dim); font-size: 12px; }
+
+  #toast {
+    position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+    background: #202124; color: #e8eaed; padding: 9px 16px; border-radius: 8px;
+    font-size: 12px; z-index: 40; box-shadow: 0 6px 20px rgba(0,0,0,.35);
+  }
+</style>
+</head>
+<body>
+<div id="chrome">
+  <div id="tabstrip">
+    <div id="tabs"></div>
+    <button id="newtab" title="New tab (Ctrl+T)" aria-label="New tab">
+      <svg width="14" height="14" viewBox="0 0 14 14"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+    </button>
+  </div>
+
+  <div id="toolbar">
+    <button class="tb" id="back" title="Back (Alt+Left)" aria-label="Back">
+      <svg width="16" height="16" viewBox="0 0 16 16"><path d="M10 3L5 8l5 5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <button class="tb" id="forward" title="Forward (Alt+Right)" aria-label="Forward">
+      <svg width="16" height="16" viewBox="0 0 16 16"><path d="M6 3l5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <button class="tb" id="reload" title="Reload (Ctrl+R)" aria-label="Reload">
+      <svg width="16" height="16" viewBox="0 0 16 16"><path d="M13 8a5 5 0 1 1-1.6-3.7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M13 2.5V5.5H10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <button class="tb" id="home" title="New tab page" aria-label="Home">
+      <svg width="16" height="16" viewBox="0 0 16 16"><path d="M2.5 7.5L8 3l5.5 4.5V13a.5.5 0 0 1-.5.5h-3v-4H6v4H3a.5.5 0 0 1-.5-.5z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+    </button>
+
+    <div id="omnibox-wrap">
+      <span id="lock" title="Connection">
+        <svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 5V3.6a3 3 0 0 1 6 0V5" fill="none" stroke="currentColor" stroke-width="1.2"/><rect x="2" y="5" width="8" height="5.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+      </span>
+      <input id="omnibox" placeholder="Search or type a URL" spellcheck="false" autocomplete="off" aria-label="Address and search bar">
+    </div>
+
+    <button class="tb" id="star" title="Bookmark this page (Ctrl+D)" aria-label="Bookmark">
+      <svg width="16" height="16" viewBox="0 0 16 16"><path d="M8 2.5l1.7 3.5 3.8.5-2.8 2.7.7 3.8L8 11.2l-3.4 1.8.7-3.8L2.5 6.5l3.8-.5z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+    </button>
+    <button class="tb" id="menu-btn" title="Customise and control RustChrome" aria-label="Menu">
+      <svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="3" r="1.4" fill="currentColor"/><circle cx="8" cy="8" r="1.4" fill="currentColor"/><circle cx="8" cy="13" r="1.4" fill="currentColor"/></svg>
+    </button>
+  </div>
+
+  <div id="bookmarks"></div>
+
+  <div id="findbar" class="hidden">
+    <input id="findinput" placeholder="Find in page" aria-label="Find in page">
+    <span id="findcount">0/0</span>
+    <button class="fb" id="findprev" title="Previous (Shift+Enter)">↑</button>
+    <button class="fb" id="findnext" title="Next (Enter)">↓</button>
+    <button class="fb" id="findclose" title="Close (Esc)">✕</button>
+  </div>
+</div>
+
+<div id="scrim"></div>
+
+<div id="menu" class="panel hidden">
+  <button class="item" data-act="newtab"><span>New tab</span><span class="key">Ctrl+T</span></button>
+  <button class="item" data-act="reopen"><span>Reopen closed tab</span><span class="key">Ctrl+Shift+T</span></button>
+  <button class="item" data-act="find"><span>Find in page…</span><span class="key">Ctrl+F</span></button>
+  <div class="sep"></div>
+  <button class="item" data-act="zin"><span>Zoom in</span><span class="key">Ctrl++</span></button>
+  <button class="item" data-act="zout"><span>Zoom out</span><span class="key">Ctrl+-</span></button>
+  <button class="item" data-act="zreset"><span>Reset zoom</span><span class="key" id="zoomlabel">100%</span></button>
+  <div class="sep"></div>
+  <button class="item" data-act="bookmarks"><span>Show bookmarks bar</span><span class="key" id="bmstate">On</span></button>
+  <button class="item" data-act="downloads"><span>Downloads</span><span class="key" id="dlcount"></span></button>
+  <button class="item" data-act="settings"><span>Settings</span></button>
+  <div class="sep"></div>
+  <button class="item" data-act="newidentity"><span>New identity (clear cookies and site data)</span></button>
+  <div class="sep"></div>
+  <button class="item" data-act="quit"><span>Quit RustChrome</span><span class="key">Ctrl+Q</span></button>
+</div>
+
+<div id="panel-settings" class="panel hidden">
+  <div class="panel-head"><span>Settings</span><button class="fb" data-close="panel-settings">✕</button></div>
+
+  <div class="row">
+    <div><div class="label">Theme</div><div class="hint">Applies to the browser and to sites that follow the OS theme</div></div>
+    <div class="seg" id="theme-seg">
+      <button data-theme="light">Light</button><button data-theme="dark">Dark</button>
+    </div>
+  </div>
+
+  <div class="row">
+    <div><div class="label">Force dark pages</div><div class="hint">Inverts page colours with a filter</div></div>
+    <button class="toggle" data-pref="force_dark"></button>
+  </div>
+
+  <div class="row">
+    <div><div class="label">Anti-fingerprinting</div><div class="hint">Pinned user agent, canvas noise, WebGL and WebRTC blocked, UTC clock</div></div>
+    <button class="toggle" data-pref="antifp"></button>
+  </div>
+
+  <div class="row">
+    <div><div class="label">Keep session data between launches</div><div class="hint">Off = every tab runs in an in-private profile that never touches disk</div></div>
+    <button class="toggle" data-pref="keep_session"></button>
+  </div>
+
+  <div class="row">
+    <div><div class="label">Search engine</div><div class="hint">Used by the address bar when the text is not a URL</div></div>
+    <select id="engine"></select>
+  </div>
+
+  <div class="sep"></div>
+  <div class="row">
+    <div><div class="label">Use scripts</div><div class="hint" id="us-dir">—</div></div>
+    <div style="display:flex;gap:8px">
+      <button class="link" data-act="openuserscripts">Open folder</button>
+      <button class="link" data-act="reloaduserscripts">Reload</button>
+    </div>
+  </div>
+
+  <div class="row">
+    <div><div class="label">Downloads folder</div><div class="hint" id="dl-dir">—</div></div>
+    <button class="link" data-act="opendownloads">Open folder</button>
+  </div>
+
+  <div class="sep"></div>
+  <div class="row"><div><div class="label">RustChrome</div><div class="hint" id="about"></div></div></div>
+</div>
+
+<div id="panel-downloads" class="panel hidden">
+  <div class="panel-head"><span>Downloads</span><button class="fb" data-close="panel-downloads">✕</button></div>
+  <div id="dl-list"></div>
+</div>
+
+<div id="toast" class="hidden"></div>
+
+<script>
+(() => {
+  "use strict";
+
+  const $ = (id) => document.getElementById(id);
+  const bridge = window.chrome && window.chrome.webview;
+  const post = (obj) => { try { bridge && bridge.postMessage(obj); } catch (e) {} };
+
+  let state = null;
+  let lastHeight = 0;
+  let lastDlStates = {};
+  let menuOpen = false;
+
+  /* ------------------------------------------------------------ rendering */
+
+  function render(s) {
+    state = s;
+    document.documentElement.classList.toggle("dark", s.prefs.theme === "dark");
+
+    // tabs
+    const tabs = $("tabs");
+    tabs.textContent = "";
+    for (const t of s.tabs) {
+      const el = document.createElement("div");
+      el.className = "tab" + (t.active ? " active" : "");
+      el.dataset.id = t.id;
+
+      if (t.loading) {
+        const sp = document.createElement("div");
+        sp.className = "spinner";
+        el.appendChild(sp);
+      }
+      const title = document.createElement("span");
+      title.className = "title";
+      title.textContent = t.title;
+      el.appendChild(title);
+
+      const close = document.createElement("button");
+      close.className = "close";
+      close.setAttribute("aria-label", "Close tab");
+      close.textContent = "✕";
+      close.addEventListener("click", (e) => {
+        e.stopPropagation();
+        post({ cmd: "closetab", id: t.id });
+      });
+      el.appendChild(close);
+
+      el.addEventListener("click", () => post({ cmd: "activate", id: t.id }));
+      el.addEventListener("auxclick", (e) => {
+        if (e.button === 1) post({ cmd: "closetab", id: t.id });
+      });
+      tabs.appendChild(el);
+    }
+    const activeTab = tabs.querySelector(".tab.active");
+    if (activeTab) activeTab.scrollIntoView({ block: "nearest", inline: "nearest" });
+
+    // omnibox
+    const box = $("omnibox");
+    if (document.activeElement !== box && box.value !== s.url) box.value = s.url;
+
+    $("back").disabled = !s.can_back;
+    $("forward").disabled = !s.can_forward;
+    $("star").classList.toggle("on", !!s.bookmarked);
+    $("zoomlabel").textContent = Math.round(s.prefs.zoom * 100) + "%";
+    $("bmstate").textContent = s.prefs.show_bookmarks ? "On" : "Off";
+
+    // bookmarks bar
+    const bar = $("bookmarks");
+    bar.textContent = "";
+    if (!s.prefs.show_bookmarks || s.bookmarks.length === 0) {
+      bar.classList.add("hidden");
+    } else {
+      bar.classList.remove("hidden");
+      for (const b of s.bookmarks) {
+        const el = document.createElement("button");
+        el.className = "bm";
+        el.title = b.url;
+        const dot = document.createElement("span");
+        dot.textContent = "🔖";
+        el.appendChild(dot);
+        const label = document.createElement("span");
+        label.textContent = b.title || b.url;
+        el.appendChild(label);
+        el.addEventListener("click", () => post({ cmd: "navigate", text: b.url }));
+        bar.appendChild(el);
+      }
+    }
+
+    // find bar
+    const fb = $("findbar");
+    fb.classList.toggle("hidden", !s.find.open);
+    if (s.find.open) {
+      $("findcount").textContent = s.find.count ? (s.find.index + "/" + s.find.count) : "0/0";
+    }
+
+    // settings values
+    for (const btn of document.querySelectorAll("#theme-seg button")) {
+      btn.classList.toggle("on", btn.dataset.theme === s.prefs.theme);
+    }
+    for (const tg of document.querySelectorAll("[data-pref]")) {
+      tg.classList.toggle("on", !!s.prefs[tg.dataset.pref]);
+    }
+    const sel = $("engine");
+    if (sel.options.length !== s.engines.length) {
+      sel.textContent = "";
+      for (const e of s.engines) {
+        const o = document.createElement("option");
+        o.value = e.id;
+        o.textContent = e.label;
+        sel.appendChild(o);
+      }
+    }
+    if (sel.value !== s.prefs.engine) sel.value = s.prefs.engine;
+    $("us-dir").textContent = s.userscripts_dir;
+    $("dl-dir").textContent = s.downloads_dir;
+    $("about").textContent = "v" + s.version + " · WebView2 " + s.runtime;
+
+    renderDownloads(s.downloads);
+    reportHeight();
+  }
+
+  function renderDownloads(list) {
+    $("dlcount").textContent = list.length ? String(list.length) : "";
+    const box = $("dl-list");
+    box.textContent = "";
+    if (!list.length) {
+      const e = document.createElement("div");
+      e.className = "empty";
+      e.textContent = "No downloads yet.";
+      box.appendChild(e);
+      return;
+    }
+    for (const d of list) {
+      const row = document.createElement("div");
+      row.className = "dl";
+      const name = document.createElement("div");
+      name.className = "name";
+      name.textContent = d.name;
+      name.title = d.path;
+      row.appendChild(name);
+
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      if (d.state === "completed") meta.textContent = "Done";
+      else if (d.state === "interrupted") meta.textContent = "Failed";
+      else if (d.total > 0) meta.textContent = Math.round((d.received / d.total) * 100) + "%";
+      else meta.textContent = "…";
+      row.appendChild(meta);
+
+      if (d.state === "completed") {
+        const b = document.createElement("button");
+        b.className = "link";
+        b.textContent = "Show";
+        b.addEventListener("click", () => post({ cmd: "reveal", id: d.id }));
+        row.appendChild(b);
+      }
+
+      box.appendChild(row);
+
+      const prev = lastDlStates[d.id];
+      if (prev && prev !== d.state && d.state === "completed") {
+        toast("Downloaded " + d.name);
+      }
+      lastDlStates[d.id] = d.state;
+    }
+  }
+
+  let toastTimer = null;
+  function toast(text) {
+    const t = $("toast");
+    t.textContent = text;
+    t.classList.remove("hidden");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.add("hidden"), 3200);
+  }
+
+  /* --------------------------------------------------------------- layout */
+
+  function reportHeight() {
+    const el = $("chrome");
+    if (!el) return;
+    const h = Math.ceil(el.getBoundingClientRect().height);
+    if (h > 0 && Math.abs(h - lastHeight) >= 1) {
+      lastHeight = h;
+      post({ cmd: "height", height: h });
+    }
+  }
+  if (window.ResizeObserver) new ResizeObserver(reportHeight).observe($("chrome"));
+
+  /* --------------------------------------------------------------- panels */
+
+  function closePanels() {
+    $("menu").classList.add("hidden");
+    $("panel-settings").classList.add("hidden");
+    $("panel-downloads").classList.add("hidden");
+    $("scrim").classList.remove("show");
+    menuOpen = false;
+  }
+  function openPanel(id) {
+    closePanels();
+    $(id).classList.remove("hidden");
+    $("scrim").classList.add("show");
+  }
+  $("scrim").addEventListener("click", closePanels);
+
+  $("menu-btn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (menuOpen) closePanels();
+    else { openPanel("menu"); menuOpen = true; }
+  });
+
+  for (const b of document.querySelectorAll("[data-close]")) {
+    b.addEventListener("click", closePanels);
+  }
+
+  /* -------------------------------------------------------------- actions */
+
+  $("newtab").addEventListener("click", () => post({ cmd: "newtab" }));
+  $("back").addEventListener("click", () => post({ cmd: "back" }));
+  $("forward").addEventListener("click", () => post({ cmd: "forward" }));
+  $("reload").addEventListener("click", () => {
+    post({ cmd: state && state.loading ? "stop" : "reload" });
+  });
+  $("home").addEventListener("click", () => post({ cmd: "home" }));
+  $("star").addEventListener("click", () => post({ cmd: "bookmark" }));
+
+  const box = $("omnibox");
+  box.addEventListener("focus", () => box.select());
+  box.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      const text = box.value.trim();
+      if (text) post({ cmd: "navigate", text });
+      box.blur();
+      e.preventDefault();
+    } else if (e.key === "Escape") {
+      box.value = state ? state.url : "";
+      box.blur();
+      e.preventDefault();
+    }
+  });
+
+  for (const item of document.querySelectorAll("#menu .item")) {
+    item.addEventListener("click", () => {
+      const act = item.dataset.act;
+      closePanels();
+      switch (act) {
+        case "newtab": post({ cmd: "newtab" }); break;
+        case "reopen": post({ cmd: "reopen" }); break;
+        case "find": openFind(); break;
+        case "zin": post({ cmd: "zoom", value: 0.1 }); break;
+        case "zout": post({ cmd: "zoom", value: -0.1 }); break;
+        case "zreset": post({ cmd: "zoomreset" }); break;
+        case "bookmarks": post({ cmd: "setpref", key: "show_bookmarks", value: !state.prefs.show_bookmarks }); break;
+        case "downloads": openPanel("panel-downloads"); break;
+        case "settings": openPanel("panel-settings"); break;
+        case "newidentity":
+          if (confirm("Clear cookies and site data and close every tab?")) post({ cmd: "newidentity" });
+          break;
+        case "quit": post({ cmd: "quit" }); break;
+      }
+    });
+  }
+
+  for (const cat of document.querySelectorAll("[data-act]")) {
+    if (cat.closest("#menu")) continue;
+    cat.addEventListener("click", () => post({ cmd: cat.dataset.act }));
+  }
+
+  for (const b of document.querySelectorAll("#theme-seg button")) {
+    b.addEventListener("click", () => post({ cmd: "setpref", key: "theme", value: b.dataset.theme }));
+  }
+  for (const t of document.querySelectorAll("[data-pref]")) {
+    t.addEventListener("click", () => {
+      const key = t.dataset.pref;
+      post({ cmd: "setpref", key, value: !state.prefs[key] });
+    });
+  }
+  $("engine").addEventListener("change", (e) => {
+    post({ cmd: "setpref", key: "engine", value: e.target.value });
+  });
+
+  /* ----------------------------------------------------------------- find */
+
+  function openFind() {
+    if (!state) return;
+    post({ cmd: "findopen" });
+    setTimeout(() => { $("findinput").focus(); $("findinput").select(); }, 0);
+  }
+
+  let findTimer = null;
+  const findInput = $("findinput");
+  findInput.addEventListener("input", () => {
+    clearTimeout(findTimer);
+    const text = findInput.value;
+    findTimer = setTimeout(() => post({ cmd: "find", text }), 140);
+  });
+  findInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      post({ cmd: "find", text: findInput.value, back: e.shiftKey });
+      e.preventDefault();
+    } else if (e.key === "Escape") {
+      post({ cmd: "findclose" });
+      e.preventDefault();
+    }
+  });
+  $("findnext").addEventListener("click", () => post({ cmd: "find", text: findInput.value }));
+  $("findprev").addEventListener("click", () => post({ cmd: "find", text: findInput.value, back: true }));
+  $("findclose").addEventListener("click", () => post({ cmd: "findclose" }));
+
+  /* ------------------------------------------------------------- keyboard */
+
+  document.addEventListener("keydown", (e) => {
+    const ctrl = e.ctrlKey || e.metaKey;
+    const k = e.key.toLowerCase();
+
+    if (e.key === "Escape") {
+      if (menuOpen) { closePanels(); e.preventDefault(); return; }
+    }
+    if (ctrl && k === "t" && !e.shiftKey) { post({ cmd: "newtab" }); e.preventDefault(); return; }
+    if (ctrl && k === "t" && e.shiftKey) { post({ cmd: "reopen" }); e.preventDefault(); return; }
+    if (ctrl && k === "w") { post({ cmd: "closetab", id: state && state.tabs.find(t => t.active)?.id }); e.preventDefault(); return; }
+    if (ctrl && k === "l") { $("omnibox").focus(); $("omnibox").select(); e.preventDefault(); return; }
+    if (ctrl && k === "r") { post({ cmd: "reload" }); e.preventDefault(); return; }
+    if (ctrl && k === "f") { openFind(); e.preventDefault(); return; }
+    if (ctrl && k === "d") { post({ cmd: "bookmark" }); e.preventDefault(); return; }
+    if (ctrl && k === "q") { post({ cmd: "quit" }); e.preventDefault(); return; }
+    if (ctrl && (e.key === "+" || e.key === "=")) { post({ cmd: "zoom", value: 0.1 }); e.preventDefault(); return; }
+    if (ctrl && e.key === "-") { post({ cmd: "zoom", value: -0.1 }); e.preventDefault(); return; }
+    if (ctrl && e.key === "0") { post({ cmd: "zoomreset" }); e.preventDefault(); return; }
+    if (ctrl && e.key === "Tab") { e.preventDefault(); return; }
+  });
+
+  /* --------------------------------------------------------------- bridge */
+
+  if (bridge) {
+    bridge.addEventListener("message", (e) => {
+      if (e.data && typeof e.data === "object" && e.data.tabs) render(e.data);
+    });
+  }
+
+  // Height first, before any state arrives.
+  reportHeight();
+})();
+</script>
+</body>
+</html>

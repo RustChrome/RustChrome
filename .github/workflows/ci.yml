@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "feat/windows-foundation"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux:
+    name: Linux (GTK3 / WebKitGTK)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: System dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgtk-3-dev libwebkit2gtk-4.1-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build the Linux package (unchanged release path)
+        run: cargo build --release
+      - name: Binary
+        run: ls -l target/release/rustchrome
+
+  windows:
+    name: Windows (Win32 / WebView2)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Versions
+        run: |
+          rustc -V
+          cargo -V
+          Write-Host "WebView2 runtime:"
+          Get-ChildItem "C:\Program Files (x86)\Microsoft\EdgeWebView\Application" -ErrorAction SilentlyContinue | Select-Object -First 3
+
+      - name: Unit tests (shared core + Windows helpers)
+        run: |
+          cargo test -p rc-core
+          if ($LastExitCode -ne 0) { exit $LastExitCode }
+          cargo test -p rustchrome-win
+          if ($LastExitCode -ne 0) { exit $LastExitCode }
+
+      - name: Clippy (informational)
+        continue-on-error: true
+        run: cargo clippy -p rc-core -p rustchrome-win --all-targets
+
+      - name: Release build
+        run: cargo build --release -p rustchrome-win
+
+      - name: Smoke test (launch, render, shut down)
+        shell: powershell
+        run: |
+          $env:RUSTCHROME_SMOKE_OUT = "$PWD\smoke.txt"
+          Remove-Item smoke.txt -ErrorAction SilentlyContinue
+          $p = Start-Process -FilePath ".\target\release\rustchrome.exe" -ArgumentList "--smoke-test" -PassThru -Wait
+          Write-Host "exit code: $($p.ExitCode)"
+          if (Test-Path smoke.txt) { Get-Content smoke.txt } else { Write-Host "no smoke output" }
+          if ($p.ExitCode -ne 0) { Write-Host "::error::browser exited with $($p.ExitCode)"; exit 1 }
+          if (-not (Test-Path smoke.txt)) { Write-Host "::error::no smoke result file"; exit 1 }
+          if (-not (Select-String -Path smoke.txt -Pattern '^OK')) { Write-Host "::error::navigation did not complete"; exit 1 }
+
+      - name: Package portable zip
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target\release\rustchrome.exe dist\
+          Copy-Item docs\WINDOWS.md dist\README-WINDOWS.md -ErrorAction SilentlyContinue
+          Compress-Archive -Path dist\* -DestinationPath rustchrome-0.1.0-x86_64-windows.zip -Force
+          Get-FileHash rustchrome-0.1.0-x86_64-windows.zip -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash)  rustchrome-0.1.0-x86_64-windows.zip" } |
+            Out-File -Encoding ascii rustchrome-0.1.0-x86_64-windows.zip.sha256
+          Get-Item rustchrome-0.1.0-x86_64-windows.zip | Select-Object Name, Length
+
+      - name: Exe details
+        shell: powershell
+        run: |
+          Get-Item target\release\rustchrome.exe | Select-Object Name, Length, @{n='Version';e={$_.VersionInfo.FileVersion}}
+          (Get-Item target\release\rustchrome.exe).VersionInfo | Format-List ProductName,FileDescription,FileVersion,LegalCopyright
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rustchrome-windows-x64
+          path: |
+            rustchrome-0.1.0-x86_64-windows.zip
+            rustchrome-0.1.0-x86_64-windows.zip.sha256
+            smoke.txt
+
+      - name: Lock file produced by this build
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-lock
+          path: Cargo.lock
+          if-no-files-found: warn
