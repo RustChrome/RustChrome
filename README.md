@@ -107,9 +107,12 @@ cd rustchrome-0.1.0-x86_64-linux
 
 Requires GTK3 and WebKitGTK 4.1 (`gtk3`, `webkit2gtk-4.1`).
 
-What the protections actually do, and what they do not:
+What the protections actually do, and claim-by-claim verification status:
 [`docs/PRIVACY.md`](docs/PRIVACY.md). Known bugs and what is untested:
-[`docs/QA.md`](docs/QA.md).
+[`docs/QA.md`](docs/QA.md). How the code is organised:
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Attack surface and its weaknesses:
+[`docs/SECURITY-REVIEW.md`](docs/SECURITY-REVIEW.md). Measured performance, and how
+to read it: [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
 
 <details>
 <summary><b>Build from source</b></summary>
@@ -134,6 +137,21 @@ cargo build --release
 </details>
 
 ---
+
+### Documentation
+
+| Document | What it answers |
+| --- | --- |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | how the two shells and the shared core fit together, and why |
+| [`docs/PRIVACY.md`](docs/PRIVACY.md) | every privacy claim with its verification status: verified, partial, or not implemented |
+| [`docs/QA.md`](docs/QA.md) | what is tested, what is not, and the known bugs |
+| [`docs/SECURITY-REVIEW.md`](docs/SECURITY-REVIEW.md) | threat model, what the browser controls, what is still weak |
+| [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) | measured memory, CPU and startup — and how to read them |
+| [`docs/RELEASE.md`](docs/RELEASE.md) | how a release is built, verified and published |
+| [`docs/WINDOWS.md`](docs/WINDOWS.md) | Windows requirements and limitations |
+
+Supported today: **Linux x86_64** (GTK3 + WebKitGTK 4.1) and **Windows 10/11 x86_64**
+(Win32 + WebView2). macOS and Android are not supported; see `ROADMAP.md`.
 
 ### Under the hood
 

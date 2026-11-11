@@ -4,7 +4,13 @@
 //! environment can refuse to start, or a controller can fail to attach to our
 //! window. All three are reported as `Err(String)` with the HRESULT, so the UI
 //! can say something useful instead of dying.
-
+//!
+//! # Unsafe contract
+//!
+//! WebView2 is COM and apartment-threaded: environments and controllers are
+//! created on the UI thread and used only from it. The `ICoreWebView2*` pointers
+//! handed back stay valid while the owning controller lives, which is why `App`
+//! keeps each controller beside the webview it belongs to.
 use std::path::PathBuf;
 
 use webview2_com::Microsoft::Web::WebView2::Win32::*;

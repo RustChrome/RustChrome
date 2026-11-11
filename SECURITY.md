@@ -33,6 +33,13 @@ Please include:
 Expect an acknowledgement within a few days. This is a small project without a
 security team; there is no bug bounty.
 
+## What has already been reviewed
+
+[`docs/SECURITY-REVIEW.md`](docs/SECURITY-REVIEW.md) contains the threat model, the
+controls that exist, the findings with their status, and the weaknesses that are
+known and accepted. Read it before reporting: if your finding is listed there as
+open, an issue is still welcome, but it saves you writing it up.
+
 ## Scope
 
 In scope, because it is our code:

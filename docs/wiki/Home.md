@@ -19,6 +19,8 @@ Beta software. Not labelled stable anywhere, and it has [known bugs](Known-Issue
 | [Troubleshooting](Troubleshooting) | It will not start, blank window, rendering glitches |
 | [Roadmap](Roadmap) | What is shipped, next, and deliberately not planned |
 | [Contributing](Contributing) | Gates, code rules, how to send a patch |
+| [Architecture](Architecture) | How the two shells and the shared core fit together |
+| [Performance](Performance) | Measured numbers, and why they are what they are |
 
 The canonical versions of the privacy and QA documents live in the repository under
 [`docs/`](https://github.com/RustChrome/RustChrome/tree/main/docs). This wiki is the

@@ -303,26 +303,67 @@ fn install_css(win: &ApplicationWindow) -> CssProvider {
     provider
 }
 
-fn prefs_path() -> PathBuf {
-    data_dir().join("prefs.json")
+// ---------------------------------------------------------------- preferences
+//
+// `prefs.json` has exactly one writer: the typed store in `rc-core`.
+//
+// The shell used to rewrite the file from raw JSON containing only the keys it
+// happened to know about, so toggling the theme silently erased the zoom level,
+// the anti-fingerprinting setting and the cleanup preference. Every read and
+// write now goes through `Prefs`, which round-trips everything it does not
+// recognise rather than dropping it.
+
+fn get_pref(key: &str) -> Option<bool> {
+    let p = rc_core::store::Prefs::load();
+    match key {
+        "dark" => Some(p.is_dark()),
+        other => p.get_bool(other),
+    }
+}
+
+fn set_pref(key: &str, val: bool) {
+    let mut p = rc_core::store::Prefs::load();
+    let (name, value) = match key {
+        "dark" => (
+            "theme",
+            serde_json::json!(if val { "dark" } else { "light" }),
+        ),
+        other => (other, serde_json::json!(val)),
+    };
+    if p.set_json(name, &value) {
+        let _ = p.save();
+    }
 }
 
 fn get_pref_f64(key: &str) -> Option<f64> {
-    std::fs::read_to_string(prefs_path())
-        .ok()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .and_then(|v| v.get(key).and_then(|d| d.as_f64()))
+    rc_core::store::Prefs::load().get_f64(key)
 }
 
 fn set_pref_f64(key: &str, val: f64) {
-    let mut v = std::fs::read_to_string(prefs_path())
-        .ok()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
-    if let Some(obj) = v.as_object_mut() {
-        obj.insert(key.to_string(), serde_json::json!(val));
+    let mut p = rc_core::store::Prefs::load();
+    if p.set_json(key, &serde_json::json!(val)) {
+        let _ = p.save();
     }
-    let _ = std::fs::write(prefs_path(), v.to_string());
+}
+
+fn load_strict() -> bool {
+    get_pref("strict").unwrap_or(false)
+}
+
+fn load_dark() -> bool {
+    get_pref("dark").unwrap_or(false)
+}
+
+fn save_dark(dark: bool) {
+    set_pref("dark", dark);
+}
+
+fn load_force_dark() -> bool {
+    get_pref("force_dark").unwrap_or(false)
+}
+
+fn save_force_dark(force: bool) {
+    set_pref("force_dark", force);
 }
 
 /// First-run zoom: follow the screen instead of assuming 1080p.
@@ -341,24 +382,6 @@ fn resolve_zoom(window: &ApplicationWindow) -> f64 {
     ((width / 1920.0).clamp(1.0, 1.4) * 20.0).round() / 20.0
 }
 
-fn get_pref(key: &str) -> Option<bool> {
-    std::fs::read_to_string(prefs_path())
-        .ok()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .and_then(|v| v.get(key).and_then(|d| d.as_bool()))
-}
-
-fn set_pref(key: &str, val: bool) {
-    let mut v = std::fs::read_to_string(prefs_path())
-        .ok()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
-    if let Some(obj) = v.as_object_mut() {
-        obj.insert(key.to_string(), serde_json::json!(val));
-    }
-    let _ = std::fs::write(prefs_path(), v.to_string());
-}
-
 fn load_antifp() -> bool {
     get_pref("antifp").unwrap_or(true)
 }
@@ -370,36 +393,6 @@ fn mark_session_clean() {
     s.dirty = false;
     s.tabs.clear();
     let _ = s.save();
-}
-
-fn load_strict() -> bool {
-    get_pref("strict").unwrap_or(false)
-}
-
-fn load_dark() -> bool {
-    std::fs::read_to_string(prefs_path())
-        .ok()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .and_then(|v| v.get("dark").and_then(|d| d.as_bool()))
-        .unwrap_or(false)
-}
-
-fn load_force_dark() -> bool {
-    std::fs::read_to_string(prefs_path())
-        .ok()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .and_then(|v| v.get("force_dark").and_then(|d| d.as_bool()))
-        .unwrap_or(false)
-}
-
-fn save_dark(dark: bool) {
-    let v = serde_json::json!({ "dark": dark, "force_dark": load_force_dark() });
-    let _ = std::fs::write(prefs_path(), v.to_string());
-}
-
-fn save_force_dark(force: bool) {
-    let v = serde_json::json!({ "dark": load_dark(), "force_dark": force });
-    let _ = std::fs::write(prefs_path(), v.to_string());
 }
 
 /// The app logo, compiled into the binary (no external asset needed at runtime).

@@ -36,10 +36,22 @@ cargo build --release -p rustchrome-win
 | `crates/rc-core` | everything platform-neutral: omnibox rules, prefs, stores, privacy payloads, bookmarks, session, tab search, site rules. **No GUI dependencies.** |
 | `crates/rc-windows` | the Windows shell: Win32 window, WebView2 controllers, downloads, HTML chrome |
 | `scripts/` | the privacy checker and the measurement harnesses |
-| `docs/` | privacy, Windows and QA documentation |
+| `docs/` | architecture, security review, privacy, performance, QA, release process |
 
 New browser behaviour belongs in `rc-core` with tests. Platform shells only
 render it and wire it to their engine.
+
+## Where things are written down
+
+| Question | Document |
+| --- | --- |
+| How is this put together? | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
+| What does it claim about privacy, and is that verified? | [`docs/PRIVACY.md`](docs/PRIVACY.md) |
+| What is broken or untested? | [`docs/QA.md`](docs/QA.md) |
+| How is it attacked, and what is still weak? | [`docs/SECURITY-REVIEW.md`](docs/SECURITY-REVIEW.md) |
+| How fast is it, and how was that measured? | [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) |
+| How is a release cut? | [`docs/RELEASE.md`](docs/RELEASE.md) |
+| Windows specifics | [`docs/WINDOWS.md`](docs/WINDOWS.md) |
 
 ## Gates
 
@@ -55,6 +67,22 @@ cargo audit
 
 CI runs the same things on ubuntu-22.04 and windows-2022. A green run is
 required; do not disable a check or mark a test `#[ignore]` to get one.
+
+## Testing
+
+`cargo test` covers `rc-core` and the Windows helpers. Beyond that, CI runs things
+a unit test cannot:
+
+* **Smoke test** — launches the browser, opens a tab, navigates, asserts the
+  navigation completed and exits 0. Both platforms.
+* **Privacy probe** — two fresh sessions, 18 invariants, compared by
+  `scripts/privacy_check.py`.
+* **Compatibility run** — loads four real sites and records status and title.
+* **Measurement** — memory, idle CPU and startup, over the whole process tree.
+
+The GTK shell has **no unit tests**: its logic needs a display and a
+`GtkApplication`. If you touch `src/main.rs`, say in the pull request what you ran
+by hand, because nothing else will catch a regression there.
 
 ## Code rules
 

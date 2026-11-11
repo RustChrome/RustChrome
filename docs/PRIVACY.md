@@ -99,6 +99,32 @@ Observed platform differences, stated rather than smoothed over:
 * The Linux UA is WebKit's own (`X11; Ubuntu … Version/60.5 Safari/605.1.15`),
   the Windows UA is a Chromium UA without `Edg/`.
 
+## Claim-by-claim status
+
+Every privacy statement the project makes, what implements it, and how far it has
+actually been checked. "Verified" means an automated test observes it. "Partial"
+means the code enforces it but nothing measures the outcome. "Not implemented"
+means the project does not claim it at all.
+
+| Claim | Implementation | Status |
+| --- | --- | --- |
+| No telemetry, no analytics, no crash pings | there is no code that sends anything except the pages you open | **Verified by construction** — no HTTP client exists outside the engine |
+| No history database | no history module or file exists | **Verified by absence** |
+| Private Session by default | ephemeral `WebKitContext` on Linux; InPrivate tabs plus `ClearBrowsingDataAll` on Windows | **Partial** — enforced by configuration, and the probe cannot read storage APIs on its opaque origin, so it reports `skip` |
+| Canvas noise is per-session | seeded shim, salt rotated on every launch | **Verified** — probe: stable within a session, different across sessions |
+| User agent matches the engine | UA derived from the runtime version, never a hard-coded foreign browser | **Verified** — probe asserts engine consistency |
+| Normalised screen, cores, memory, language, timezone | injected payload plus engine switches | **Verified** — probe compares two sessions |
+| WebGL and WebRTC neutralised in Strict mode | WebKitGTK settings; WebView2 feature removal | **Partial** — the settings are applied, but candidate gathering is not observable from the probe page |
+| Third-party cookies off, ITP / tracking prevention on | cookie manager policy and profile setting | **Partial** — set on both engines, not measured against a real third-party request |
+| Ad and tracker blocking | none | **Not implemented** — not claimed anywhere |
+| IP address protection | none | **Not implemented** — stated plainly in the README |
+| Permissions denied by default | Linux denies every request; Windows consults per-site rules | **Partial** — code-verified, no automated test drives a permission prompt |
+| New Identity wipes data and rotates the salt | clears the data store, reseeds, reopens one tab | **Partial** — implemented on both shells, exercised manually |
+
+Anything marked partial is a known gap in *verification*, not in intent. The
+distinction matters: a claim that is enforced but never observed is one refactor
+away from being untrue.
+
 ## What this does not prove
 
 * It does not prove the browser is unlinkable. The probe measures what *this page
