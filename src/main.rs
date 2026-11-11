@@ -366,6 +366,35 @@ fn save_force_dark(force: bool) {
     set_pref("force_dark", force);
 }
 
+/// First-run zoom: follow the screen instead of assuming 1080p.
+fn resolve_zoom(window: &ApplicationWindow) -> f64 {
+    if let Some(z) = get_pref_f64("zoom") {
+        return z.clamp(0.25, 5.0);
+    }
+    let scale = window.scale_factor() as f64;
+    if scale > 1.0 {
+        return 1.0; // GTK already scales HiDPI
+    }
+    let width = gtk::prelude::WidgetExt::screen(window)
+        .and_then(|s| s.display().primary_monitor())
+        .map(|m| m.geometry().width() as f64)
+        .unwrap_or(1920.0);
+    ((width / 1920.0).clamp(1.0, 1.4) * 20.0).round() / 20.0
+}
+
+fn load_antifp() -> bool {
+    get_pref("antifp").unwrap_or(true)
+}
+
+/// Strict mode denies WebGL and removes WebRTC instead of coercing them.
+/// A clean exit must not look like a crash to the next run.
+fn mark_session_clean() {
+    let mut s = rc_core::features::SessionState::load();
+    s.dirty = false;
+    s.tabs.clear();
+    let _ = s.save();
+}
+
 /// The app logo, compiled into the binary (no external asset needed at runtime).
 fn app_icon() -> Option<gtk::gdk_pixbuf::Pixbuf> {
     let loader = gtk::gdk_pixbuf::PixbufLoader::new();
