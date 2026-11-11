@@ -1,6 +1,6 @@
 [package]
 name = "rc-core"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 license = "MIT"
 description = "Platform-neutral core for RustChrome: URL handling, stores, data-directory policy."

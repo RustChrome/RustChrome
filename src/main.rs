@@ -917,43 +917,9 @@ impl App {
         }
     }
 
-    fn new_tab(&self, url: &str) -> Rc<Tab> {
-        let id = self.next_id.get();
-        self.next_id.set(id + 1);
-
-        let label = Label::new(Some("New Tab"));
-        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        label.set_width_chars(14);
-        label.set_max_width_chars(18);
-
-        // Two sibling GtkButtons (never nested, never inside another button):
-        // the label area activates the tab, the "x" closes it. Both are plain
-        // buttons, so mouse clicks AND accessibility actions reach them.
-        let label_btn = Button::new();
-        label_btn.set_relief(gtk::ReliefStyle::None);
-        label_btn.style_context().add_class("tablabel");
-        label_btn.add(&label);
-
-        let close_btn = Button::new();
-        close_btn.set_relief(gtk::ReliefStyle::None);
-        close_btn.style_context().add_class("closetab");
-        close_btn.set_image(Some(&Image::from_icon_name(
-            Some("window-close-symbolic"),
-            gtk::IconSize::Menu,
-        )));
-        close_btn.set_tooltip_text(Some("Close tab"));
-
-        let inner = GtkBox::new(Orientation::Horizontal, 4);
-        inner.pack_start(&label_btn, true, true, 0);
-        inner.pack_start(&close_btn, false, false, 0);
-
-        let tab_widget = EventBox::new();
-        tab_widget.set_visible_window(true);
-        tab_widget.style_context().add_class("tab");
-        tab_widget.add(&inner);
-        self.tabs_box.pack_start(&tab_widget, false, false, 0);
-        tab_widget.show_all();
-
+    /// Build and configure one tab's webview. Settings come from the current
+    /// privacy mode, so this must be called with `antifp`/`strict` already read.
+    fn create_view(&self) -> WebView {
         let view = WebView::builder()
             .web_context(&self.ctx)
             .user_content_manager(&self.ucm)
@@ -996,6 +962,47 @@ impl App {
         };
         view.set_background_color(&bg);
         view.set_zoom_level(self.zoom.get());
+        view
+    }
+
+    fn new_tab(&self, url: &str) -> Rc<Tab> {
+        let id = self.next_id.get();
+        self.next_id.set(id + 1);
+
+        let label = Label::new(Some("New Tab"));
+        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        label.set_width_chars(14);
+        label.set_max_width_chars(18);
+
+        // Two sibling GtkButtons (never nested, never inside another button):
+        // the label area activates the tab, the "x" closes it. Both are plain
+        // buttons, so mouse clicks AND accessibility actions reach them.
+        let label_btn = Button::new();
+        label_btn.set_relief(gtk::ReliefStyle::None);
+        label_btn.style_context().add_class("tablabel");
+        label_btn.add(&label);
+
+        let close_btn = Button::new();
+        close_btn.set_relief(gtk::ReliefStyle::None);
+        close_btn.style_context().add_class("closetab");
+        close_btn.set_image(Some(&Image::from_icon_name(
+            Some("window-close-symbolic"),
+            gtk::IconSize::Menu,
+        )));
+        close_btn.set_tooltip_text(Some("Close tab"));
+
+        let inner = GtkBox::new(Orientation::Horizontal, 4);
+        inner.pack_start(&label_btn, true, true, 0);
+        inner.pack_start(&close_btn, false, false, 0);
+
+        let tab_widget = EventBox::new();
+        tab_widget.set_visible_window(true);
+        tab_widget.style_context().add_class("tab");
+        tab_widget.add(&inner);
+        self.tabs_box.pack_start(&tab_widget, false, false, 0);
+        tab_widget.show_all();
+
+        let view = self.create_view();
         let page = format!("tab-{}", id);
         self.stack.add_named(&view, page.as_str());
         view.show();
@@ -2414,4 +2421,58 @@ fn main() {
         let _me = App::build(app);
     });
     application.run();
+}
+
+#[cfg(test)]
+mod shell_tests {
+    use super::*;
+
+    /// The stylesheet is one embedded string. If a selector disappears, a control
+    /// silently loses its styling; this catches that without a display.
+    #[test]
+    fn stylesheet_still_styles_the_controls_we_ship() {
+        for selector in [".tab", "omnibox", "#progress", ".closetab", "headerbar"] {
+            assert!(CSS.contains(selector), "stylesheet lost `{selector}`");
+        }
+    }
+
+    /// The stylesheet must be parseable GTK CSS. Skipped when there is no display
+    /// server, which is why CI runs the tests under `xvfb-run`.
+    #[test]
+    fn stylesheet_parses_when_a_display_exists() {
+        if gtk::init().is_err() {
+            eprintln!("no display server; skipping the GTK CSS parse check");
+            return;
+        }
+        let provider = gtk::CssProvider::new();
+        if let Err(e) = provider.load_from_data(CSS.as_bytes()) {
+            panic!("embedded stylesheet does not parse: {e}");
+        }
+    }
+
+    /// The shell addresses preferences by UI name ("dark"), the store by field
+    /// name ("theme"). That mapping is exactly what used to be done by hand, and
+    /// what destroyed settings when it was done wrong.
+    #[test]
+    fn shell_pref_names_map_to_typed_fields() {
+        let p = rc_core::store::Prefs::load();
+        assert_eq!(get_pref("dark"), Some(p.is_dark()));
+        assert_eq!(get_pref("antifp"), Some(p.antifp));
+        assert_eq!(get_pref("no-such-setting"), None);
+    }
+
+    /// Writing one setting through the shell must leave the rest untouched.
+    #[test]
+    fn shell_writes_preserve_unrelated_settings() {
+        let before = rc_core::store::Prefs::load();
+        set_pref("autoclear", !before.autoclear);
+
+        let after = rc_core::store::Prefs::load();
+        assert_eq!(after.autoclear, !before.autoclear, "the setting did not change");
+        assert_eq!(after.zoom, before.zoom, "zoom was disturbed");
+        assert_eq!(after.antifp, before.antifp, "anti-fingerprinting was disturbed");
+        assert_eq!(after.engine, before.engine, "the search engine was disturbed");
+
+        set_pref("autoclear", before.autoclear);
+    }
 }

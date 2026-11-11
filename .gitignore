@@ -5,6 +5,8 @@ dist_qa/
 dist_qa/
 dist_qa*/
 rel/
-rel*/
+# Root-only: an unanchored `rel*/` also matched docs/releases/ and silently kept
+# the release notes out of the repository. 0.2.1's notes were lost this way.
+/rel*/
 fmt_out/
 .wiki-work/
