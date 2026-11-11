@@ -42,6 +42,8 @@ pub struct Prefs {
     pub engine: String,
     pub find_case: bool,
     pub zoom: f64,
+    /// Clear the web data store when the window closes (Private Session).
+    pub autoclear: bool,
 }
 
 impl Default for Prefs {
@@ -59,6 +61,7 @@ impl Default for Prefs {
             engine: "google".to_string(),
             find_case: false,
             zoom: 1.0,
+            autoclear: true,
         }
     }
 }
@@ -97,6 +100,31 @@ impl Prefs {
         self.theme == "dark"
     }
 
+    /// Read one setting by the name the UI uses. `None` means "no such key",
+    /// so a typo cannot silently read as `false`.
+    pub fn get_bool(&self, key: &str) -> Option<bool> {
+        Some(match key {
+            "force_dark" => self.force_dark,
+            "antifp" => self.antifp,
+            "strict" => self.strict,
+            "keep_session" => self.keep_session,
+            "restore_session" => self.restore_session,
+            "show_bookmarks" => self.show_bookmarks,
+            "find_case" => self.find_case,
+            "autoclear" => self.autoclear,
+            "theme" => self.is_dark(),
+            _ => return None,
+        })
+    }
+
+    /// Numeric counterpart of [`Prefs::get_bool`].
+    pub fn get_f64(&self, key: &str) -> Option<f64> {
+        match key {
+            "zoom" => Some(self.zoom),
+            _ => None,
+        }
+    }
+
     /// Apply one setting coming from the UI. Unknown keys are ignored.
     pub fn set_json(&mut self, key: &str, value: &serde_json::Value) -> bool {
         let mut changed = true;
@@ -120,6 +148,7 @@ impl Prefs {
                 self.show_bookmarks = value.as_bool().unwrap_or(self.show_bookmarks)
             }
             "find_case" => self.find_case = value.as_bool().unwrap_or(self.find_case),
+            "autoclear" => self.autoclear = value.as_bool().unwrap_or(self.autoclear),
             "engine" => {
                 if let Some(id) = value.as_str() {
                     if SEARCH_ENGINES.iter().any(|e| e.0 == id) {
@@ -259,6 +288,56 @@ mod tests {
             "toggling the theme must not reset anti-fingerprinting"
         );
         assert_eq!(p.engine, "google");
+    }
+
+    #[test]
+    fn changing_one_setting_never_resets_the_others() {
+        // The shell's old raw-JSON writer dropped every key it did not know,
+        // so toggling the theme erased zoom, antifp and the cleanup setting.
+        let mut p = Prefs {
+            zoom: 1.3,
+            antifp: false,
+            autoclear: false,
+            keep_session: true,
+            ..Default::default()
+        };
+        p.set_json("theme", &serde_json::json!("dark"));
+        assert_eq!(p.theme, "dark");
+        assert_eq!(p.zoom, 1.3);
+        assert!(!p.antifp);
+        assert!(!p.autoclear);
+        assert!(p.keep_session);
+
+        p.set_json("force_dark", &serde_json::json!(true));
+        assert_eq!(p.zoom, 1.3);
+        assert!(!p.antifp);
+    }
+
+    #[test]
+    fn getters_agree_with_setters_and_reject_unknown_keys() {
+        let mut p = Prefs::default();
+        assert_eq!(p.get_bool("autoclear"), Some(true));
+        assert!(p.set_json("autoclear", &serde_json::json!(false)));
+        assert_eq!(p.get_bool("autoclear"), Some(false));
+
+        // "dark" is the shell's alias for the theme string, not a stored key.
+        assert_eq!(p.get_bool("dark"), None);
+        p.set_json("theme", &serde_json::json!("dark"));
+        assert_eq!(p.get_bool("theme"), Some(true));
+
+        assert_eq!(p.get_f64("zoom"), Some(1.0));
+        assert_eq!(p.get_f64("nonsense"), None);
+    }
+
+    #[test]
+    fn autoclear_survives_serialisation() {
+        let p = Prefs {
+            autoclear: false,
+            ..Default::default()
+        };
+        let s = serde_json::to_string(&p).unwrap();
+        let back: Prefs = serde_json::from_str(&s).unwrap();
+        assert!(!back.autoclear);
     }
 
     #[test]
