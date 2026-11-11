@@ -4,7 +4,6 @@
 //! shims in `rc_core::privacy` do that work and this module applies everything
 //! the engine *does* offer: InPrivate profiles, strict tracking prevention,
 //! deny-all permissions and autofill/password saving off.
-
 //!
 //! # Unsafe contract
 //!

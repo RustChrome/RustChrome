@@ -4,7 +4,6 @@
 //! environment can refuse to start, or a controller can fail to attach to our
 //! window. All three are reported as `Err(String)` with the HRESULT, so the UI
 //! can say something useful instead of dying.
-
 //!
 //! # Unsafe contract
 //!
