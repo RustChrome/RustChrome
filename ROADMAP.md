@@ -25,6 +25,16 @@ Identity, no telemetry.
 * QA: format, clippy, tests, `cargo audit`, memory/CPU/startup measurement and a
   real-website compatibility run, on real Linux and Windows runners.
 
+## Audit-driven work (after 0.2.0)
+
+Fixed: the Linux preference store rewrote `prefs.json` and destroyed settings on a
+theme toggle; dropped UI callbacks and failed `SetBounds` calls were silent; the
+COM modules had no documented unsafe contract.
+
+Still open from the same audit: the four functions over 100 lines (split one at a
+time, with a compile cycle each), the GTK shell's missing tests, and the external
+protocol policy that exists on Windows but not on Linux.
+
 ## Next, in rough order
 
 1. **Fix the Linux gaps the QA report found** — per-site permission rules are

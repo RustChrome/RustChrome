@@ -138,6 +138,21 @@ cargo build --release
 
 ---
 
+### Documentation
+
+| Document | What it answers |
+| --- | --- |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | how the two shells and the shared core fit together, and why |
+| [`docs/PRIVACY.md`](docs/PRIVACY.md) | every privacy claim with its verification status: verified, partial, or not implemented |
+| [`docs/QA.md`](docs/QA.md) | what is tested, what is not, and the known bugs |
+| [`docs/SECURITY-REVIEW.md`](docs/SECURITY-REVIEW.md) | threat model, what the browser controls, what is still weak |
+| [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) | measured memory, CPU and startup — and how to read them |
+| [`docs/RELEASE.md`](docs/RELEASE.md) | how a release is built, verified and published |
+| [`docs/WINDOWS.md`](docs/WINDOWS.md) | Windows requirements and limitations |
+
+Supported today: **Linux x86_64** (GTK3 + WebKitGTK 4.1) and **Windows 10/11 x86_64**
+(Win32 + WebView2). macOS and Android are not supported; see `ROADMAP.md`.
+
 ### Under the hood
 
 - **Rust**, GTK3, WebKitGTK — ~1.8k lines, one file, no framework.
