@@ -1,4 +1,11 @@
 //! Win32 window registration, creation and small geometry helpers.
+//!
+//! # Unsafe contract
+//!
+//! Every function here runs on the thread that created the window — the process
+//! main thread. Win32 handles are not valid from anywhere else, and nothing in
+//! this module stores one past the window's lifetime; the `WM_DESTROY` path
+//! releases what it owns.
 
 use windows::core::{w, Result, HSTRING, PCWSTR};
 use windows::Win32::Foundation::{HINSTANCE, HWND, RECT};

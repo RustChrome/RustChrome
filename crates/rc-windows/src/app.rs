@@ -49,6 +49,9 @@ pub fn install(app: Rc<RefCell<App>>) {
 /// reported by the smoke trace.
 pub static DROPPED_MESSAGES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// Failed `SetBounds` calls. Non-zero means a webview is probably invisible.
+pub static BOUNDS_FAILURES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 pub fn with_app<F: FnOnce(&mut App)>(f: F) {
     let rc = APP.with(|c| c.borrow().clone());
     if let Some(rc) = rc {
@@ -997,9 +1000,10 @@ impl App {
             // succeeded. Gated behind an env var until the UI is confirmed to
             // render on a real desktop, so packaging still runs.
             self.trace(&format!(
-                "ui messages: {} dropped: {}",
+                "ui messages: {} dropped: {} bounds_failures: {}",
                 self.ui_msgs,
-                DROPPED_MESSAGES.load(std::sync::atomic::Ordering::Relaxed)
+                DROPPED_MESSAGES.load(std::sync::atomic::Ordering::Relaxed),
+                BOUNDS_FAILURES.load(std::sync::atomic::Ordering::Relaxed)
             ));
             let strict_ui = std::env::var("RUSTCHROME_STRICT_UI").is_ok();
             self.finish_smoke(ok && (!strict_ui || self.ui_msgs > 0), status);
@@ -2064,7 +2068,16 @@ impl App {
                 bottom: chrome_px,
             };
             webview::set_rasterization(&ch.controller, scale);
+            // SAFETY: WebView2 controllers are apartment-threaded and every call
+            // here happens on the UI thread that created them; `rect` is a plain
+            // POD struct with no interior pointers.
             let hr = unsafe { ch.controller.SetBounds(rect) };
+            // A failed SetBounds used to be indistinguishable from a working one:
+            // the chrome webview existed, was visible, reported success to its
+            // caller, and painted nothing. Count the failures instead.
+            if hr.is_err() {
+                BOUNDS_FAILURES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
             if self.smoke {
                 let title = unsafe {
                     let mut p = PWSTR::null();
@@ -2092,7 +2105,11 @@ impl App {
         for t in &self.tabs {
             if let Some(c) = &t.controller {
                 webview::set_rasterization(c, scale);
+                // SAFETY: same apartment and thread as the controller above.
                 let hr = unsafe { c.SetBounds(content) };
+                if hr.is_err() {
+                    BOUNDS_FAILURES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
                 if self.smoke {
                     self.trace(&format!(
                         "tab {} bounds {{0,{},,{}}} hr={:?}",
