@@ -10,6 +10,7 @@ on:
         "feat/everyday-features",
         "feat/qa",
         "feat/beta",
+        "fix/audit",
       ]
   pull_request:
   workflow_dispatch:

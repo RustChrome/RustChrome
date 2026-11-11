@@ -44,11 +44,21 @@ pub fn install(app: Rc<RefCell<App>>) {
 
 /// Run `f` with the app borrowed. Skipped (not panicked) if a handler fires
 /// while we are already inside a borrow — losing one redraw beats crashing.
+/// Callbacks the UI bridge could not deliver because `App` was already borrowed.
+/// Dropping a click silently is how an invisible bug survives; the count is
+/// reported by the smoke trace.
+pub static DROPPED_MESSAGES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 pub fn with_app<F: FnOnce(&mut App)>(f: F) {
     let rc = APP.with(|c| c.borrow().clone());
     if let Some(rc) = rc {
-        if let Ok(mut a) = rc.try_borrow_mut() {
-            f(&mut a);
+        match rc.try_borrow_mut() {
+            Ok(mut a) => f(&mut a),
+            Err(_) => {
+                // Re-entrant callback: the previous handler is still holding the
+                // App. The action is lost, so at least make it countable.
+                DROPPED_MESSAGES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
         }
     }
 }
@@ -986,7 +996,11 @@ impl App {
             // the window has no controls even though every WebView2 call
             // succeeded. Gated behind an env var until the UI is confirmed to
             // render on a real desktop, so packaging still runs.
-            self.trace(&format!("ui messages: {}", self.ui_msgs));
+            self.trace(&format!(
+                "ui messages: {} dropped: {}",
+                self.ui_msgs,
+                DROPPED_MESSAGES.load(std::sync::atomic::Ordering::Relaxed)
+            ));
             let strict_ui = std::env::var("RUSTCHROME_STRICT_UI").is_ok();
             self.finish_smoke(ok && (!strict_ui || self.ui_msgs > 0), status);
         }
