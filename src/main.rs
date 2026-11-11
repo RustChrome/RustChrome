@@ -2468,10 +2468,19 @@ mod shell_tests {
         set_pref("autoclear", !before.autoclear);
 
         let after = rc_core::store::Prefs::load();
-        assert_eq!(after.autoclear, !before.autoclear, "the setting did not change");
+        assert_eq!(
+            after.autoclear, !before.autoclear,
+            "the setting did not change"
+        );
         assert_eq!(after.zoom, before.zoom, "zoom was disturbed");
-        assert_eq!(after.antifp, before.antifp, "anti-fingerprinting was disturbed");
-        assert_eq!(after.engine, before.engine, "the search engine was disturbed");
+        assert_eq!(
+            after.antifp, before.antifp,
+            "anti-fingerprinting was disturbed"
+        );
+        assert_eq!(
+            after.engine, before.engine,
+            "the search engine was disturbed"
+        );
 
         set_pref("autoclear", before.autoclear);
     }
