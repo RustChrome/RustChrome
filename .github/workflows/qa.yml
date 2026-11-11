@@ -2,7 +2,7 @@ name: QA
 
 on:
   push:
-    branches: ["main", "feat/qa", "feat/beta", "fix/audit"]
+    branches: ["main", "feat/qa", "feat/beta", "fix/audit", "release/0.2.1"]
   pull_request:
   workflow_dispatch:
 
