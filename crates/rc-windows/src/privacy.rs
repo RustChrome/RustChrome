@@ -5,6 +5,12 @@
 //! the engine *does* offer: InPrivate profiles, strict tracking prevention,
 //! deny-all permissions and autofill/password saving off.
 
+//!
+//! # Unsafe contract
+//!
+//! Settings interfaces are borrowed from a webview for the duration of a call
+//! and never stored. `configure` runs on the UI thread before the first
+//! navigation, so a setting can never be applied to a page already loaded.
 use rc_core::privacy::FORCE_DARK_CSS;
 use rc_core::store::Prefs;
 use webview2_com::AddScriptToExecuteOnDocumentCreatedCompletedHandler;
