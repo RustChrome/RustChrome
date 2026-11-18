@@ -12,13 +12,14 @@ on:
         "feat/beta",
         "fix/audit",
         "release/0.2.1",
+        "release/0.2.2",
       ]
   pull_request:
   workflow_dispatch:
 
 env:
   # Single source of truth for artifact names; keep in step with Cargo.toml.
-  VERSION: "0.2.1"
+  VERSION: "0.2.2"
 
 jobs:
   linux:

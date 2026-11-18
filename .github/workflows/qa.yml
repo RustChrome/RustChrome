@@ -2,7 +2,7 @@ name: QA
 
 on:
   push:
-    branches: ["main", "feat/qa", "feat/beta", "fix/audit", "release/0.2.1"]
+    branches: ["main", "feat/qa", "feat/beta", "fix/audit", "release/0.2.1", "release/0.2.2"]
   pull_request:
   workflow_dispatch:
 
@@ -45,7 +45,13 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
 
       - name: cargo test
-        run: cargo test --all-targets
+        # The GTK shell's stylesheet test needs a display server; without one it
+        # logs a skip rather than failing, but running under xvfb means it
+        # actually executes here.
+        run: |
+          xvfb-run -a dbus-run-session -- cargo test --all-targets
+          # Re-run the pure tests without a display so both paths are covered.
+          cargo test -p rc-core --all-targets
 
       - name: Release build
         run: cargo build --release
