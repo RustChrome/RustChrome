@@ -2435,7 +2435,14 @@ mod shell_tests {
         // its own, it is `#urlem`. This test failed on its first CI run by
         // asserting a selector that never existed, which is the failure mode it
         // is meant to catch — in the other direction.
-        for selector in [".tab", ".closetab", "#tabstrip", "#toolbar", "#urlem", "#progress"] {
+        for selector in [
+            ".tab",
+            ".closetab",
+            "#tabstrip",
+            "#toolbar",
+            "#urlem",
+            "#progress",
+        ] {
             assert!(CSS.contains(selector), "stylesheet lost `{selector}`");
         }
     }
