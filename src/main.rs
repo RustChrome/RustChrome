@@ -2431,7 +2431,11 @@ mod shell_tests {
     /// silently loses its styling; this catches that without a display.
     #[test]
     fn stylesheet_still_styles_the_controls_we_ship() {
-        for selector in [".tab", "omnibox", "#progress", ".closetab", "headerbar"] {
+        // Real selectors from the stylesheet above; the omnibox has no class of
+        // its own, it is `#urlem`. This test failed on its first CI run by
+        // asserting a selector that never existed, which is the failure mode it
+        // is meant to catch — in the other direction.
+        for selector in [".tab", ".closetab", "#tabstrip", "#toolbar", "#urlem", "#progress"] {
             assert!(CSS.contains(selector), "stylesheet lost `{selector}`");
         }
     }
