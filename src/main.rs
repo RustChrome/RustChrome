@@ -508,6 +508,8 @@ fn permission_kind_for(req: &webkit2gtk::PermissionRequest) -> &'static str {
         DeviceInfoPermissionRequest, GeolocationPermissionRequest, NotificationPermissionRequest,
         UserMediaPermissionRequest,
     };
+    // `is_for_*_device` are methods on the extension trait, not inherent.
+    use webkit2gtk::UserMediaPermissionRequestExt;
     if req.is::<NotificationPermissionRequest>() {
         return "notifications";
     }
