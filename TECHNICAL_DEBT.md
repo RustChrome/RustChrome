@@ -35,8 +35,9 @@ None currently tracked.
 
 7. **Memory 300–470 MB.** Must be reduced with measurement, not adjectives.
 
-8. **Stale repo hygiene:** three done epics still open on GitHub (#2, #3, #4);
-   generated release artifacts committed under `rel2/…rel9/`.
+8. **Stale repo hygiene (partially resolved):** the three shipped epics (#2, #3,
+   #4) are now closed; the generated release artifacts committed under
+   `rel2/…rel9/` still bloat history and should move to GitHub Releases.
 
 ## Low
 
