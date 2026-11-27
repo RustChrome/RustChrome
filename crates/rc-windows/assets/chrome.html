@@ -32,31 +32,9 @@
     --accent: #1a73e8;
     --shadow: rgba(32, 33, 36, .28);
   }
-  html.dark {
-    --window: #202124;
-    --headerbar: #202124;
-    --toolbar: #35363a;
-    --text: #e8eaed;
-    --tab-text: #9aa0a6;
-    --tab-hover: #2d2f31;
-    --tab-active-bg: #35363a;
-    --tab-active-fg: #e8eaed;
-    --close-hover: #4a4d51;
-    --url-bg: #202124;
-    --url-fg: #e8eaed;
-    --url-focus-bg: #202124;
-    --url-border: #8ab4f8;
-    --btn-fg: #9aa0a6;
-    --btn-hover: #4a4d51;
-    --bm-fg: #bdc1c6;
-    --bm-hover: #4a4d51;
-    --menu-bg: #35363a;
-    --menu-fg: #e8eaed;
-    --menu-hover: #4a4d51;
-    --sep: #4a4d51;
-    --accent: #8ab4f8;
-    --shadow: rgba(0, 0, 0, .6);
-  }
+  /* Theme palettes are injected by the shell at startup as
+     `html[data-theme="…"]` blocks immediately before `</style>`, driven by the
+     theme id in `prefs`. Do not add a hardcoded `html.dark` block here. */
   * { box-sizing: border-box; }
   html, body {
     margin: 0; padding: 0; overflow: hidden;
@@ -223,10 +201,10 @@
 
   #toast {
     position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
-    background: #202124; color: #e8eaed; padding: 9px 16px; border-radius: 8px;
+    background: var(--menu-fg); color: var(--menu-bg); padding: 9px 16px; border-radius: 8px;
     font-size: 12px; z-index: 40; box-shadow: 0 6px 20px rgba(0,0,0,.35);
   }
-  html.dark #toast { background: #e8eaed; color: #202124; }
+  /* The inverse-colour toast follows the theme (menu fg↔bg) on both engines. */
 </style>
 </head>
 <body>
@@ -431,7 +409,7 @@
 
   function render(s) {
     state = s;
-    document.documentElement.classList.toggle("dark", s.prefs.theme === "dark");
+    document.documentElement.dataset.theme = s.prefs.theme || "light";
 
     const tabs = $("tabs");
     tabs.textContent = "";
@@ -481,7 +459,8 @@
     $("clearlabel").textContent = "Clear data on exit: " + (s.prefs.keep_session ? "off" : "on");
     $("fplabel").textContent = "Anti-fingerprinting: " + (s.prefs.antifp ? "on" : "off");
     $("fdlabels").textContent = "Force dark pages: " + (s.prefs.force_dark ? "on" : "off");
-    $("themelabel").textContent = s.prefs.theme === "dark" ? "Light mode" : "Dark mode";
+    const themeCur = (s.themes || []).find(([id]) => id === s.prefs.theme);
+    $("themelabel").textContent = "Theme: " + (themeCur ? themeCur[1] : s.prefs.theme);
     $("progress").classList.toggle("on", !!s.loading);
 
     const bar = $("bookmarks");
@@ -745,7 +724,12 @@
     "clear-on-exit": () => post({ cmd: "setpref", key: "keep_session", value: !state.prefs.keep_session }),
     antifp: () => post({ cmd: "setpref", key: "antifp", value: !state.prefs.antifp }),
     forcedark: () => post({ cmd: "setpref", key: "force_dark", value: !state.prefs.force_dark }),
-    theme: () => post({ cmd: "setpref", key: "theme", value: state.prefs.theme === "dark" ? "light" : "dark" }),
+    theme: () => {
+      const list = state.themes || [["dark", "Dark"], ["light", "Light"]];
+      const i = list.findIndex(([id]) => id === state.prefs.theme);
+      const next = (i + 1) % list.length;
+      post({ cmd: "setpref", key: "theme", value: list[next][0] });
+    },
     settings: () => openPanel("panel-settings"),
     quit: () => post({ cmd: "quit" })
   };

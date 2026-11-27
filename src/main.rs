@@ -95,78 +95,54 @@ html { filter: invert(0.92) hue-rotate(180deg) !important; }
 img, picture, video, canvas, svg, iframe { filter: invert(1) hue-rotate(180deg) !important; }
 "#;
 
+/// Theme-agnostic chrome CSS. Colours come from the active theme's palette via
+/// `@define-color rc_*` blocks prepended by [`install_css`], so one rule sheet
+/// serves every theme and nothing here restyles during a switch.
 const CSS: &str = r#"
-window { background: #ffffff; }
-window.dark { background: #202124; }
+window { background: @rc_bg; }
 
-headerbar { background: #dee1e6; border: none; box-shadow: none; min-height: 40px;
+headerbar { background: @rc_header; border: none; box-shadow: none; min-height: 40px;
             padding: 0 2px 0 4px; }
 headerbar button.titlebutton { background: transparent; border: none; box-shadow: none;
-            min-width: 24px; min-height: 24px; padding: 2px; margin: 0 2px; color: #5f6368; }
-headerbar button.titlebutton:hover { background: #cfd3d9; border-radius: 999px; color: #202124; }
-.dark headerbar { background: #202124; }
-.dark headerbar button.titlebutton { color: #9aa0a6; }
-.dark headerbar button.titlebutton:hover { background: #35363a; color: #e8eaed; }
+            min-width: 24px; min-height: 24px; padding: 2px; margin: 0 2px; color: @rc_tab; }
+headerbar button.titlebutton:hover { background: @rc_header_hover; border-radius: 999px; color: @rc_fg; }
 #tabstrip { background: transparent; padding: 4px 0 0 0; }
-.dark #tabstrip { background: transparent; }
 .tab { background: transparent; border-radius: 8px 8px 0 0; padding: 0 6px 0 12px;
-       margin: 0 2px 0 0; color: #5f6368; min-height: 34px; }
-.dark .tab { color: #9aa0a6; }
-.tab:hover { background: #cfd3d9; }
-.dark .tab:hover { background: #2d2f31; }
-.tab.active { background: #ffffff; color: #202124; }
-.dark .tab.active { background: #35363a; color: #e8eaed; }
+       margin: 0 2px 0 0; color: @rc_tab; min-height: 34px; }
+.tab:hover { background: @rc_tab_hover; }
+.tab.active { background: @rc_tab_active; color: @rc_tab_active_fg; }
 .tab label { font-size: 12px; }
 .tab button { background: transparent; border: none; padding: 0; color: inherit; min-height: 0; }
-.closetab { padding: 0 2px; min-width: 18px; min-height: 18px; border-radius: 999px; color: #5f6368; }
-.dark .closetab { color: #9aa0a6; }
-.closetab:hover { background: #dadce0; color: #202124; }
-.dark .closetab:hover { background: #4a4d51; color: #ffffff; }
-#newtab { background: transparent; border: none; color: #5f6368; font-size: 19px;
+.closetab { padding: 0 2px; min-width: 18px; min-height: 18px; border-radius: 999px; color: @rc_tab; }
+.closetab:hover { background: @rc_close_hover; color: @rc_fg; }
+#newtab { background: transparent; border: none; color: @rc_tab; font-size: 19px;
           padding: 0 10px; border-radius: 999px; }
-.dark #newtab { color: #9aa0a6; }
-#newtab:hover { background: #cfd3d9; color: #202124; }
-.dark #newtab:hover { background: #2d2f31; color: #e8eaed; }
-#toolbar { background: #ffffff; padding: 4px 8px; }
-.dark #toolbar { background: #35363a; }
+#newtab:hover { background: @rc_tab_hover; color: @rc_fg; }
+#toolbar { background: @rc_toolbar; padding: 4px 8px; }
 #toolbar button { background: transparent; border: none; padding: 6px; border-radius: 999px;
-                  color: #5f6368; }
-.dark #toolbar button { color: #9aa0a6; }
-#toolbar button:hover { background: #f1f3f4; }
-.dark #toolbar button:hover { background: #4a4d51; color: #e8eaed; }
-#toolbar button:disabled { color: #bdc1c6; }
-.dark #toolbar button:disabled { color: #5f6368; }
-#urlem { font-size: 14px; background: #f1f3f4; border: 1px solid transparent; border-radius: 999px;
-         padding: 8px 16px; min-height: 30px; color: #202124; caret-color: #1a73e8; }
-.dark #urlem { background: #202124; color: #e8eaed; caret-color: #8ab4f8; }
-#urlem:focus { background: #ffffff; border-color: #1a73e8; box-shadow: 0 1px 6px rgba(32,33,36,.28); }
-.dark #urlem:focus { background: #202124; border-color: #8ab4f8; box-shadow: 0 1px 6px rgba(0,0,0,.6); }
-#bookmarksbar { background: #ffffff; padding: 0 6px 4px 6px; }
-.dark #bookmarksbar { background: #35363a; }
-#bookmarksbar button { background: transparent; border: none; color: #3c4043; font-size: 12px;
+                  color: @rc_tab; }
+#toolbar button:hover { background: @rc_surface; color: @rc_fg; }
+#toolbar button:disabled { color: @rc_disabled; }
+#urlem { font-size: 14px; background: @rc_field; border: 1px solid transparent; border-radius: 999px;
+         padding: 8px 16px; min-height: 30px; color: @rc_fg; caret-color: @rc_accent; }
+#urlem:focus { background: @rc_field; border-color: @rc_accent; box-shadow: 0 1px 6px rgba(32,33,36,.28); }
+#bookmarksbar { background: @rc_toolbar; padding: 0 6px 4px 6px; }
+#bookmarksbar button { background: transparent; border: none; color: @rc_tab; font-size: 12px;
                        padding: 4px 8px; border-radius: 4px; }
 #bookmarksbar button label { font-size: 12px; }
-.dark #bookmarksbar button { color: #bdc1c6; }
-#bookmarksbar button:hover { background: #f1f3f4; }
-.dark #bookmarksbar button:hover { background: #4a4d51; }
+#bookmarksbar button:hover { background: @rc_surface; }
 #findentry { font-size: 13px; }
-#findbar { background: #ffffff; padding: 4px 10px; border-top: 1px solid #e8eaed; }
-.dark #findbar { background: #35363a; border-top: 1px solid #202124; }
-menu { background: #ffffff; padding: 6px 0; }
-.dark menu { background: #35363a; }
-menuitem { padding: 7px 16px; font-size: 13px; color: #202124; }
-.dark menuitem { color: #e8eaed; }
-menuitem:hover { background: #f1f3f4; }
-.dark menuitem:hover { background: #4a4d51; }
-menu separator { background: #e8eaed; }
-.dark menu separator { background: #4a4d51; }
+#findbar { background: @rc_toolbar; padding: 4px 10px; border-top: 1px solid @rc_line; }
+menu { background: @rc_toolbar; padding: 6px 0; }
+menuitem { padding: 7px 16px; font-size: 13px; color: @rc_fg; }
+menuitem:hover { background: @rc_surface; }
+menu separator { background: @rc_line; }
 
 #avatar-spacer { min-width: 2px; }
 
 #progress { min-height: 2px; background: transparent; }
 #progress trough { min-height: 2px; border: none; background: transparent; }
-#progress progress { min-height: 2px; border: none; background: #1a73e8; }
-.dark #progress progress { background: #8ab4f8; }
+#progress progress { min-height: 2px; border: none; background: @rc_accent; }
 "#;
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -226,6 +202,7 @@ struct App {
     fp_script: RefCell<Option<webkit2gtk::UserScript>>,
     dark_sheet: RefCell<Option<UserStyleSheet>>,
     dark: Cell<bool>,
+    theme: RefCell<String>,
     tabs: RefCell<Vec<Rc<Tab>>>,
     bookmarks: RefCell<Vec<Bookmark>>,
     closed: RefCell<Vec<String>>,
@@ -273,23 +250,43 @@ fn normalize(input: &str) -> String {
 }
 
 /// New-tab page in the right palette without needing a page-wide CSS filter.
-fn ntp_html(dark: bool) -> String {
+/// The light theme returns the template untouched (so nothing restyles on
+/// upgrade); every other theme substitutes its palette colours into the same
+/// structure, which is exactly how the evaluator consumed the template before.
+fn ntp_html(palette: &rc_core::themes::Palette) -> String {
     let base = NEW_TAB_HTML.to_string();
-    if !dark {
+    let c = palette.new_tab_colors();
+    if palette.bg == "#ffffff" && c.0 == "#ffffff" {
+        // The light theme keeps the shipped template verbatim.
         return base;
     }
-    base.replace("background:#fff", "background:#202124")
-        .replace("color:#202124", "color:#e8eaed")
-        .replace("border:1px solid #dfe1e5", "border:1px solid #5f6368")
-        .replace("background:#f8f9fa", "background:#303134")
-        .replace("border:1px solid #f8f9fa", "border:1px solid #303134")
-        .replace("color:#3c4043", "color:#e8eaed")
-        .replace("color:#70757a", "color:#9aa0a6")
+    base.replace("background:#fff", &format!("background:{}", palette.bg))
+        .replace("color:#202124", &format!("color:{}", palette.fg))
+        .replace(
+            "border:1px solid #dfe1e5",
+            &format!("border:1px solid {}", c.3),
+        )
+        .replace("background:#f8f9fa", &format!("background:{}", c.4))
+        .replace(
+            "border:1px solid #f8f9fa",
+            &format!("border:1px solid {}", c.4),
+        )
+        .replace("color:#3c4043", &format!("color:{}", c.5))
+        .replace("color:#70757a", &format!("color:{}", c.6))
+}
+
+/// The full stylesheet for the currently-selected theme: `@define-color`
+/// palette block prepended to the theme-agnostic rule sheet. Callers that
+/// rescale (zoom) must rescale `CSS` *then* prepend this, so the `px`
+/// transform cannot touch hex colour digits.
+fn themed_css() -> String {
+    let theme = rc_core::themes::resolve(&rc_core::store::Prefs::load().theme);
+    format!("{}\n{}", theme.palette.define_colors(), CSS)
 }
 
 fn install_css(win: &ApplicationWindow) -> CssProvider {
     let provider = CssProvider::new();
-    if let Err(e) = provider.load_from_data(CSS.as_bytes()) {
+    if let Err(e) = provider.load_from_data(themed_css().as_bytes()) {
         eprintln!("css error: {e}");
     }
     let screen = gtk::prelude::WidgetExt::screen(win).or_else(gtk::gdk::Screen::default);
@@ -354,8 +351,16 @@ fn load_dark() -> bool {
     get_pref("dark").unwrap_or(false)
 }
 
-fn save_dark(dark: bool) {
-    set_pref("dark", dark);
+/// The active theme id (e.g. "light", "dark", "nord").
+fn load_theme() -> String {
+    rc_core::store::Prefs::load().theme
+}
+
+fn save_theme(id: &str) {
+    let mut p = rc_core::store::Prefs::load();
+    if p.set_json("theme", &serde_json::json!(id)) {
+        let _ = p.save();
+    }
 }
 
 fn load_force_dark() -> bool {
@@ -468,6 +473,27 @@ fn set_icon(b: &Button, name: &str) {
         Some(name),
         gtk::IconSize::LargeToolbar,
     )));
+}
+
+/// Parse a `#rrggbb` colour to an RGBA. Returns white on malformed input so a
+/// bad value can never panic or crash the browser.
+fn hex_rgba(hex: &str, alpha: f64) -> gtk::gdk::RGBA {
+    let h = hex.strip_prefix('#').unwrap_or(hex);
+    if h.len() == 6 {
+        if let (Ok(r), Ok(g), Ok(b)) = (
+            u8::from_str_radix(&h[0..2], 16),
+            u8::from_str_radix(&h[2..4], 16),
+            u8::from_str_radix(&h[4..6], 16),
+        ) {
+            return gtk::gdk::RGBA::new(
+                r as f64 / 255.0,
+                g as f64 / 255.0,
+                b as f64 / 255.0,
+                alpha,
+            );
+        }
+    }
+    gtk::gdk::RGBA::new(1.0, 1.0, 1.0, alpha)
 }
 
 impl App {
@@ -644,6 +670,7 @@ impl App {
             fp_script: RefCell::new(None),
             dark_sheet: RefCell::new(None),
             dark: Cell::new(dark_now),
+            theme: RefCell::new(load_theme()),
             window,
             stack,
             tabs_box: tabs_box.clone(),
@@ -665,7 +692,7 @@ impl App {
         });
         *me.me.borrow_mut() = Rc::downgrade(&me);
         me.wire(&new_tab_btn, &home, &menu_btn, &avatar, &find_close);
-        me.apply_theme(dark_now, false);
+        me.apply_theme(&load_theme(), false);
         me.apply_ui_zoom(zoom_now);
         me.refresh_bookmarks_bar();
         me.setup_downloads();
@@ -759,8 +786,18 @@ impl App {
         {
             let a = self.rc();
             theme_btn_conn(&self.theme_btn, move || {
-                let d = !a.dark.get();
-                a.apply_theme(d, true);
+                // The toolbar theme button cycles through every registered
+                // theme so the picker stays one click away (the menu has the
+                // full list too).
+                let ids = rc_core::themes::all_ids();
+                let cur = a.theme.borrow().clone();
+                let next = ids
+                    .iter()
+                    .position(|id| *id == cur)
+                    .map(|i| (i + 1) % ids.len())
+                    .unwrap_or(0);
+                let id = ids[next];
+                a.apply_theme(id, true);
             });
         }
 
@@ -955,11 +992,10 @@ impl App {
         });
         view.set_hexpand(true);
         view.set_vexpand(true);
-        let bg = if self.dark.get() {
-            gtk::gdk::RGBA::new(0.125, 0.129, 0.141, 1.0)
-        } else {
-            gtk::gdk::RGBA::new(1.0, 1.0, 1.0, 1.0)
-        };
+        let bg = hex_rgba(
+            rc_core::themes::resolve(&self.theme.borrow()).palette.bg,
+            1.0,
+        );
         view.set_background_color(&bg);
         view.set_zoom_level(self.zoom.get());
         view
@@ -1240,7 +1276,10 @@ impl App {
             return;
         }
         if url == NEW_TAB_PAGE {
-            tab.view.load_html(&ntp_html(self.dark.get()), None);
+            tab.view.load_html(
+                &ntp_html(&rc_core::themes::resolve(&self.theme.borrow()).palette),
+                None,
+            );
             tab.uri.borrow_mut().clear();
             self.entry.set_text("");
         } else {
@@ -1301,7 +1340,7 @@ impl App {
             settings: vec![
                 ("Anti-fingerprinting".to_string(), on(antifp)),
                 ("Strict mode".to_string(), on(strict)),
-                ("Theme".to_string(), if self.dark.get() { "dark" } else { "light" }.to_string()),
+                ("Theme".to_string(), self.theme.borrow().clone()),
             ],
             protections: vec![
                 Row {
@@ -1687,16 +1726,23 @@ impl App {
         });
     }
 
-    fn apply_theme(&self, dark: bool, persist: bool) {
+    fn apply_theme(&self, id: &str, persist: bool) {
+        let theme = rc_core::themes::resolve(id);
+        let dark = theme.is_dark;
+        *self.theme.borrow_mut() = theme.id.to_string();
         self.dark.set(dark);
-        if dark {
-            self.window.style_context().add_class("dark");
-        } else {
-            self.window.style_context().remove_class("dark");
-        }
         if let Some(settings) = gtk::Settings::default() {
             settings.set_gtk_application_prefer_dark_theme(dark);
         }
+
+        // Reload the one css provider with the new theme's palette block. The
+        // provider is already registered with the screen, so reloading it is
+        // enough to restyle every widget in place.
+        let css = format!("{}\n{}", theme.palette.define_colors(), CSS);
+        if let Err(e) = self.css.borrow().load_from_data(css.as_bytes()) {
+            eprintln!("css error: {e}");
+        }
+
         if let Some(old) = self.dark_sheet.borrow_mut().take() {
             self.ucm.remove_style_sheet(&old);
         }
@@ -1719,19 +1765,14 @@ impl App {
                 "weather-clear-night-symbolic"
             },
         );
-        self.theme_btn
-            .set_tooltip_text(Some(if dark { "Light mode" } else { "Dark mode" }));
+        self.theme_btn.set_tooltip_text(Some(theme.label));
 
-        let bg = if dark {
-            gtk::gdk::RGBA::new(0.125, 0.129, 0.141, 1.0)
-        } else {
-            gtk::gdk::RGBA::new(1.0, 1.0, 1.0, 1.0)
-        };
+        let bg = hex_rgba(theme.palette.bg, 1.0);
         for t in self.tabs.borrow().iter() {
             t.view.set_background_color(&bg);
         }
         if persist {
-            save_dark(dark);
+            save_theme(theme.id);
         }
     }
 
@@ -2027,7 +2068,12 @@ impl App {
         }
         self.ui_zoom.set(scale);
         let provider = CssProvider::new();
-        let css = scale_css(CSS, scale);
+        // Rescale the raw rule sheet first, then prepend the palette block, so
+        // `scale_css` (which multiplies "Npx" numbers) never touches hex digits.
+        let palette = rc_core::themes::resolve(&rc_core::store::Prefs::load().theme)
+            .palette
+            .define_colors();
+        let css = format!("{palette}\n{}", scale_css(CSS, scale));
         if let Err(e) = provider.load_from_data(css.as_bytes()) {
             eprintln!("css error: {e}");
         }
@@ -2266,21 +2312,26 @@ impl App {
                 let now = !a.force_dark.get();
                 a.force_dark.set(now);
                 save_force_dark(now);
-                let d = a.dark.get();
-                a.apply_theme(d, false);
+                let id = a.theme.borrow().clone();
+                a.apply_theme(&id, false);
             });
         }
-        let mi_theme = add(if self.dark.get() {
-            "Light mode"
-        } else {
-            "Dark mode"
-        });
+        let mi_theme = add("Themes");
         {
+            // A submenu of every registered theme, with the current one marked.
+            let sub = gtk::Menu::new();
             let a = self.rc();
-            mi_theme.connect_activate(move |_| {
-                let d = !a.dark.get();
-                a.apply_theme(d, true);
-            });
+            let current = self.theme.borrow().clone();
+            for theme in rc_core::themes::THEMES {
+                let item = gtk::CheckMenuItem::with_label(theme.label);
+                item.set_active(theme.id == current);
+                let id = theme.id;
+                let a = a.clone();
+                item.connect_activate(move |_| a.apply_theme(id, true));
+                sub.append(&item);
+            }
+            sub.show_all();
+            mi_theme.set_submenu(Some(&sub));
         }
         let mi_quit = add("Quit");
         mi_quit.connect_activate(move |_| std::process::exit(0));
@@ -2456,8 +2507,26 @@ mod shell_tests {
             return;
         }
         let provider = gtk::CssProvider::new();
-        if let Err(e) = provider.load_from_data(CSS.as_bytes()) {
+        if let Err(e) = provider.load_from_data(themed_css().as_bytes()) {
             panic!("embedded stylesheet does not parse: {e}");
+        }
+    }
+
+    /// Every registered theme must produce a stylesheet that GTK accepts; a
+    /// colour that does not parse would silently restyle nothing but the
+    /// widgets that can still render.
+    #[test]
+    fn every_theme_stylesheet_parses_when_a_display_exists() {
+        if gtk::init().is_err() {
+            eprintln!("no display server; skipping the GTK CSS parse check");
+            return;
+        }
+        for theme in rc_core::themes::THEMES {
+            let css = format!("{}\n{}", theme.palette.define_colors(), CSS);
+            let provider = gtk::CssProvider::new();
+            if let Err(e) = provider.load_from_data(css.as_bytes()) {
+                panic!("theme {} stylesheet does not parse: {e}", theme.id);
+            }
         }
     }
 

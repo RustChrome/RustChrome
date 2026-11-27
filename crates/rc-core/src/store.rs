@@ -21,7 +21,8 @@ fn write_atomic(path: &PathBuf, bytes: &[u8]) -> std::io::Result<()> {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(default)]
 pub struct Prefs {
-    /// "light" or "dark"
+    /// Theme id from `themes::THEMES` (e.g. "light", "dark", "nord"). Any
+    /// unknown value is repaired to the default on load.
     pub theme: String,
     /// Invert page colours with a filter (opt-in, off by default).
     pub force_dark: bool,
@@ -79,8 +80,8 @@ impl Prefs {
         if !SEARCH_ENGINES.iter().any(|e| e.0 == p.engine) {
             p.engine = SEARCH_ENGINES[0].0.to_string();
         }
-        if p.theme != "dark" {
-            p.theme = "light".to_string();
+        if !crate::themes::known(&p.theme) {
+            p.theme = crate::themes::DEFAULT_ID.to_string();
         }
         p.zoom = p.zoom.clamp(0.25, 5.0);
         p
@@ -96,8 +97,16 @@ impl Prefs {
         crate::features::resolve_template(id, &self.engines)
     }
 
+    /// Whether the active theme is a dark theme. Resolves through the theme
+    /// registry; always well-defined even if `theme` were somehow unknown.
     pub fn is_dark(&self) -> bool {
-        self.theme == "dark"
+        crate::themes::resolve(&self.theme).is_dark
+    }
+
+    /// The active theme's palette. Well-defined for any `theme` value because
+    /// the registry falls back to the default for unknown ids.
+    pub fn palette(&self) -> crate::themes::Palette {
+        crate::themes::resolve(&self.theme).palette
     }
 
     /// Read one setting by the name the UI uses. `None` means "no such key",
@@ -130,12 +139,10 @@ impl Prefs {
         let mut changed = true;
         match key {
             "theme" => {
-                self.theme = if value.as_str() == Some("dark") {
-                    "dark"
-                } else {
-                    "light"
+                self.theme = match value.as_str() {
+                    Some(id) if crate::themes::known(id) => id.to_string(),
+                    _ => crate::themes::DEFAULT_ID.to_string(),
                 }
-                .to_string()
             }
             "force_dark" => self.force_dark = value.as_bool().unwrap_or(self.force_dark),
             "antifp" => self.antifp = value.as_bool().unwrap_or(self.antifp),

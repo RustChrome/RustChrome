@@ -4,7 +4,7 @@ Two browser shells over one shared core. The point of the split is that browser
 behaviour is written and tested once, and each platform only has to render it.
 
 ```
-                 crates/rc-core          (no GUI dependencies, 37 tests)
+                 crates/rc-core          (no GUI dependencies, 45 tests)
         omnibox rules · prefs store · bookmarks io · session records
         privacy payloads · tab-search ranking · site rules · dashboard
                     │                              │
@@ -29,6 +29,7 @@ the dashboard — already lives in `rc-core` and is tested there.
 | `store.rs` | atomic JSON stores: prefs, bookmarks, userscripts |
 | `features.rs` | bookmark import (Chrome JSON, Netscape HTML), export, session records, tab search, site rules, custom engines |
 | `privacy.rs` | the injected payloads and the probe script, shared by both engines |
+| `themes.rs` | curated themes and the shared semantic palette; both shells render it in their own substrate |
 | `dashboard.rs` | the one renderer for the privacy dashboard |
 | `crates/rc-windows/src/main.rs` | process entry, DPI awareness, single-instance mutex |
 | `window.rs` | Win32 window, work-area clamping, DWM frame theming |

@@ -45,7 +45,7 @@ yours: pages render with WebKit, everything else is written here in Rust.
 | **Bookmarks that stay put** | Star or Ctrl+D, a bar under the address bar, and a clean `about:rustchrome-bookmarks` page. |
 | **Instant zoom** | Ctrl +/−/0 scales the page *and* the interface, remembers it per tab, and restores it next launch. |
 | **Find in page** | Ctrl+F, live highlighting, Esc to dismiss. |
-| **Light & dark** | Both themes, remembered between sessions. |
+| **Themes** | Light, Dark, Graphite, Sepia, Midnight and Nord — a shared palette on both engines, remembered between sessions. |
 | **Downloads** | Straight to `~/Downloads`, no dialog maze. |
 | **Userscripts** | Drop a `.js` in `~/.local/share/rustchrome/extensions` or install from a URL. |
 

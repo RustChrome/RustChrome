@@ -8,6 +8,7 @@ pub mod dashboard;
 pub mod features;
 pub mod privacy;
 pub mod store;
+pub mod themes;
 
 use std::path::PathBuf;
 

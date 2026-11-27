@@ -59,10 +59,15 @@ impl Msg {
 /// success and the built-in error page was disabled so nothing was shown. A
 /// virtual host serving the same HTML from a real file is the reliable path for
 /// a document this size.
+///
+/// Before writing the file we inject every registered theme's palette block so
+/// `chrome.html` can flip themes from the persisted id (`data-theme`) without
+/// restarting and without carrying a second copy of the colours.
 pub fn load(webview: &ICoreWebView2) {
     let dir = rc_core::data_dir().join("ui");
+    let html = themed_chrome_html();
     let written = std::fs::create_dir_all(&dir).is_ok()
-        && std::fs::write(dir.join("chrome.html"), HTML).is_ok();
+        && std::fs::write(dir.join("chrome.html"), &html).is_ok();
 
     if written {
         if let Ok(w3) = webview.cast::<ICoreWebView2_3>() {
@@ -84,8 +89,21 @@ pub fn load(webview: &ICoreWebView2) {
     }
 
     unsafe {
+        // Fall back to the raw (light) chrome if the themed write failed.
         let _ = webview.NavigateToString(&HSTRING::from(HTML));
     }
+}
+
+/// The chrome document with every theme's palette block injected before
+/// `</style>`, right after the hardcoded light `:root` block. The light values
+/// stay as the base; each `html[data-theme="…"]` block overrides them.
+fn themed_chrome_html() -> String {
+    let mut blocks = String::new();
+    for theme in rc_core::themes::THEMES {
+        blocks.push_str(&theme.palette.windows_chrome_block(theme.id));
+    }
+    // Anchor onto the same closing tag the template's own `<style>` uses.
+    HTML.replacen("</style>", &format!("{blocks}</style>"), 1)
 }
 
 pub fn post(webview: &ICoreWebView2, json: &str) {

@@ -20,7 +20,7 @@ fn wordmark() -> &'static str {
     r#"<div class="logo"><span style="color:#4285f4">G</span><span style="color:#ea4335">o</span><span style="color:#fbbc05">o</span><span style="color:#4285f4">g</span><span style="color:#34a853">l</span><span style="color:#ea4335">e</span></div>"#
 }
 
-pub fn new_tab_html(engine: &str, dark: bool) -> String {
+pub fn new_tab_html(engine: &str, palette: &rc_core::themes::Palette) -> String {
     let template = search_template(engine);
     let label = SEARCH_ENGINES
         .iter()
@@ -40,15 +40,9 @@ pub fn new_tab_html(engine: &str, dark: bool) -> String {
         format!("{} Search", esc(label))
     };
 
-    let (bg, fg, field, field_border, btn_bg, btn_fg, foot) = if dark {
-        (
-            "#202124", "#e8eaed", "#202124", "#5f6368", "#303134", "#e8eaed", "#9aa0a6",
-        )
-    } else {
-        (
-            "#ffffff", "#202124", "#ffffff", "#dfe1e5", "#f8f9fa", "#3c4043", "#70757a",
-        )
-    };
+    // The theme palette, expanded into the dimensions the page template takes:
+    // (bg, fg, field, field_border, btn_bg, btn_fg, foot).
+    let (bg, fg, field, field_border, btn_bg, btn_fg, foot) = palette.new_tab_colors();
 
     format!(
         r#"<!doctype html><html><head><meta charset="utf-8"><title>New Tab</title><style>
@@ -106,12 +100,13 @@ document.getElementById('lucky').addEventListener('click', () => {{
     )
 }
 
-pub fn error_html(url: &str, message: &str, dark: bool) -> String {
-    let (bg, fg, sub, code_bg) = if dark {
-        ("#202124", "#e8eaed", "#9aa0a6", "#303134")
-    } else {
-        ("#ffffff", "#202124", "#5f6368", "#f1f3f4")
-    };
+pub fn error_html(url: &str, message: &str, palette: &rc_core::themes::Palette) -> String {
+    let (bg, fg, sub, code_bg) = (
+        palette.bg,
+        palette.fg,
+        palette.tab,
+        palette.nt_btn, // sub=dim, code=btn surface
+    );
     format!(
         r#"<!doctype html><html><head><meta charset="utf-8"><title>Can't be reached</title>
 <style>

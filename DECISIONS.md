@@ -61,3 +61,24 @@ TECHNICAL_DEBT #8.)
 
 No plan to rewrite Linux as Windows or vice versa. A single abstraction would
 lose more than it gains.
+
+## D10. Theme colours live once, in `rc-core`, and each shell renders them in its own substrate
+
+Themes are a shared semantic `Palette` (window, chrome, surfaces, text, accent,
+hairlines, new-tab page) defined and tested in `rc-core/src/themes.rs`. Linux
+renders it as GTK `@define-color` blocks over one theme-agnostic rule sheet;
+Windows injects `html[data-theme]` CSS blocks into `chrome.html` at startup. No
+shell carries a second copy of the colours, so a palette change can't drift.
+
+Rationale: the two substrates genuinely differ (GTK widgets vs WebView2 HTML),
+so forcing one CSS representation would be D1's mistake again. What is shared is
+the *data* — the palette and its validity — which is exactly what `rc-core` owns.
+The two default themes (light/dark) reproduce the 0.2.2 colours slot-for-slot so
+upgrading never restyles an existing user, and a test enforces it.
+
+## D11. Theme count is deliberately small and curated
+
+Six themes: two defaults plus four tasteful accents (Graphite, Sepia, Midnight,
+Nord; two of them light). Fifty skins would be noise, not value. Adding a theme
+is a one-block change in `themes.rs` plus a test — the point is that the *data*
+is cheap to extend even though the shipped set is small.

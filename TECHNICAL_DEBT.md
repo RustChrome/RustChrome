@@ -44,7 +44,21 @@ None currently tracked.
 
 ## Low
 
-9. Stale doc micro-claims (README binary size; "37 tests" vs 40).
+9. Stale doc micro-claims (README binary size). The "37 tests" claim is now 45
+   and corrected in ARCHITECTURE.md.
+
+## Work in progress (0.2.3 themes)
+
+Implemented in `rc-core` (verified: 45 tests) and written in both shells. The
+Linux shell (GTK) and Windows shell (`chrome.html`) wiring is **not yet
+compiled** in this sandbox — the sandbox lacks `webkit2gtk-4.0` (only 4.1 is
+present) and there is no Windows host. It must pass the real-runner qa.yml gates
+before the 0.2.3 release is cut. Items to verify there:
+
+* Linux: per-theme GTK stylesheet parse under xvfb (test added), theme picker
+  menu, toolbar-cycle button, new-tab/tab-background colours.
+* Windows: injected `html[data-theme]` blocks render for every theme, theme menu
+  cycle + label, new-tab/error pages.
 
 ## Observability counters
 

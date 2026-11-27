@@ -35,6 +35,17 @@ Still open from the same audit: the four functions over 100 lines (split one at 
 time, with a compile cycle each), the GTK shell's missing tests, and the external
 protocol policy that exists on Windows but not on Linux.
 
+## Shipped — 0.2.3 (many themes)
+
+* Six curated themes (Light, Dark, Graphite, Sepia, Midnight, Nord) from one
+  shared palette in `rc-core`, rendered by both shells: GTK `@define-color` on
+  Linux, injected `html[data-theme]` blocks on Windows. The two defaults keep
+  their exact 0.2.2 colours so nothing restyles on upgrade.
+* Theme picker (⋯ menu) and a cycling toolbar button on Linux; theme id drives
+  `data-theme` on Windows. New-tab and error pages pull from the same palette.
+* `rc-core` accepts any registered theme id and repairs unknown values to the
+  default. The dead `save_dark`/`.dark`-class path was removed.
+
 ## Next, in rough order
 
 1. **Fix the Linux gaps the QA report found** — per-site permission rules are

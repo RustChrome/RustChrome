@@ -831,7 +831,7 @@ impl App {
         let html = if self.probe.is_some() {
             rc_core::privacy::probe_html()
         } else {
-            pages::new_tab_html(&self.prefs.engine, self.prefs.is_dark())
+            pages::new_tab_html(&self.prefs.engine, &self.prefs.palette())
         };
         self.tabs[idx].wants = Some(String::new());
         self.tabs[idx].url.clear();
@@ -970,7 +970,7 @@ impl App {
                     let html = pages::error_html(
                         &url,
                         &format!("Network error (status {status})."),
-                        self.prefs.is_dark(),
+                        &self.prefs.palette(),
                     );
                     if let Some(wv) = self.tabs[idx].webview.clone() {
                         unsafe {
@@ -1639,6 +1639,10 @@ impl App {
             "bookmarks": bms,
             "downloads": downloads,
             "engines": engines,
+            "themes": rc_core::themes::THEMES
+                .iter()
+                .map(|t| (t.id, t.label))
+                .collect::<Vec<_>>(),
             "find": { "open": self.find_open, "count": self.find_count, "index": self.find_index },
             "prefs": {
                 "theme": self.prefs.theme,

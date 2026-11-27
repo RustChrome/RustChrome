@@ -577,7 +577,7 @@ dependencies = [
 
 [[package]]
 name = "rc-core"
-version = "0.1.0"
+version = "0.2.3"
 dependencies = [
  "serde",
  "serde_json",
@@ -594,9 +594,10 @@ dependencies = [
 
 [[package]]
 name = "rustchrome"
-version = "0.1.0"
+version = "0.2.3"
 dependencies = [
  "gtk",
+ "rc-core",
  "serde",
  "serde_json",
  "webkit2gtk",
@@ -605,7 +606,7 @@ dependencies = [
 
 [[package]]
 name = "rustchrome-win"
-version = "0.1.0"
+version = "0.2.3"
 dependencies = [
  "embed-resource",
  "rc-core",
