@@ -19,7 +19,7 @@ on:
 
 env:
   # Single source of truth for artifact names; keep in step with Cargo.toml.
-  VERSION: "0.2.2"
+  VERSION: "0.2.3"
 
 jobs:
   linux:
