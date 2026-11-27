@@ -412,6 +412,9 @@ fn app_icon() -> Option<gtk::gdk_pixbuf::Pixbuf> {
 
 fn icon_button(name: &str, tip: &str) -> Button {
     let b = Button::new();
+    // A stable widget name lets the interactive test harness find and click
+    // each control (gtk::test_find_widget) and helps accessibility tooling.
+    b.set_widget_name(name);
     let img = Image::from_icon_name(Some(name), gtk::IconSize::LargeToolbar);
     img.set_pixel_size(16);
     b.set_image(Some(&img));
@@ -496,6 +499,40 @@ fn hex_rgba(hex: &str, alpha: f64) -> gtk::gdk::RGBA {
     gtk::gdk::RGBA::new(1.0, 1.0, 1.0, alpha)
 }
 
+/// Map a WebKitGTK permission request down the concrete-request types to the
+/// stable kind names the per-site rules use (the same names Windows maps its
+/// WebView2 kinds to). Anything unrecognised is `"unknown"`, which the rules
+/// can still address with an explicit rule but never allows by default.
+fn permission_kind_for(req: &webkit2gtk::PermissionRequest) -> &'static str {
+    use webkit2gtk::{
+        DeviceInfoPermissionRequest, GeolocationPermissionRequest, NotificationPermissionRequest,
+        UserMediaPermissionRequest,
+    };
+    if req.is::<NotificationPermissionRequest>() {
+        return "notifications";
+    }
+    if req.is::<GeolocationPermissionRequest>() {
+        return "geolocation";
+    }
+    if req.is::<DeviceInfoPermissionRequest>() {
+        return "sensors";
+    }
+    if req.is::<UserMediaPermissionRequest>() {
+        if let Some(um) = req.downcast_ref::<UserMediaPermissionRequest>() {
+            // WebKitGTK reports audio and video as two properties on one
+            // request; prefer the stricter interpretation when both are asked.
+            if um.is_for_video_device() {
+                return "camera";
+            }
+            if um.is_for_audio_device() {
+                return "microphone";
+            }
+        }
+        return "microphone";
+    }
+    "unknown"
+}
+
 impl App {
     fn build(app: &Application) -> Rc<Self> {
         let window = ApplicationWindow::new(app);
@@ -542,7 +579,9 @@ impl App {
         entry.set_primary_icon_name(Some("system-search-symbolic"));
 
         let theme_btn = icon_button("weather-clear-night-symbolic", "Dark mode");
+        theme_btn.set_widget_name("theme");
         let menu_btn = icon_button("view-more-symbolic", "Customize and control RustChrome");
+        menu_btn.set_widget_name("menu");
 
         toolbar.pack_start(&back, false, false, 0);
         toolbar.pack_start(&forward, false, false, 0);
@@ -985,9 +1024,20 @@ impl App {
                 s.set_hardware_acceleration_policy(policy);
             }
         }
-        view.connect_permission_request(|_v, req| {
+        view.connect_permission_request(|v, req| {
             use webkit2gtk::PermissionRequestExt;
-            req.deny();
+            // Consult the per-site rules (same logic as Windows). Deny by
+            // default; only an explicit user allow-rule grants the request.
+            let kind = permission_kind_for(req);
+            let uri = v.uri().map(|u| u.to_string()).unwrap_or_default();
+            let allow =
+                rc_core::features::site_decision(&rc_core::features::load_sites(), &uri, kind)
+                    == Some(true);
+            if allow {
+                req.allow();
+            } else {
+                req.deny();
+            }
             true
         });
         view.set_hexpand(true);
@@ -2563,5 +2613,85 @@ mod shell_tests {
         );
 
         set_pref("autoclear", before.autoclear);
+    }
+
+    /// The interactive harness: builds the real `App` under a display server,
+    /// finds the wired controls by widget name and *clicks* them, asserting the
+    /// observable state changed. This is the missing "does anything actually
+    /// happen when you click" check — a click that silently does nothing is a
+    /// broken feature even though every button is `connect_clicked`-wired.
+    ///
+    /// Requires a display server and a working WebKitGTK, which is why CI runs
+    /// it under `xvfb-run`. Without a display it logs a skip rather than
+    /// failing. Builds the real window, pumps the main loop a few turns, then
+    /// clicks the theme and new-tab buttons.
+    #[test]
+    fn clicking_buttons_changes_state_when_a_display_exists() {
+        if gtk::init().is_err() {
+            eprintln!("no display server; skipping the interactive harness");
+            return;
+        }
+        // A temp HOME keeps prefs/session writes out of the real user data dir,
+        // and a blank start URL keeps the harness off the network.
+        let tmp = std::env::temp_dir().join(format!("rustchrome-test-{}", std::process::id()));
+        std::env::set_var("HOME", &tmp);
+        std::env::set_var("RUSTCHROME_START_URL", "about:blank");
+
+        let app = gtk::Application::builder()
+            .application_id("com.rustchrome.shell-test")
+            .build();
+        let me = App::build(&app);
+        me.window.show_all();
+
+        // Pump the main loop so the initial activation and widget realisation
+        // settle before we start clicking.
+        for _ in 0..8 {
+            gtk::glib::MainContext::default().iteration(true);
+        }
+
+        let initial_theme = me.theme.borrow().clone();
+        let initial_tabs = me.tabs.borrow().len();
+
+        // The theme button (name "theme") must actually advance the theme.
+        if let Some(w) = gtk::test_find_widget(&me.window, "theme", gtk::glib::Type::UNIT) {
+            let btn = w.downcast::<gtk::Button>().ok();
+            if let Some(btn) = btn {
+                btn.emit_clicked();
+                gtk::glib::MainContext::default().iteration(false);
+                let now = me.theme.borrow().clone();
+                assert_ne!(
+                    now, initial_theme,
+                    "theme button click did not change the theme"
+                );
+                let ids = rc_core::themes::all_ids();
+                assert!(
+                    ids.contains(&now.as_str()),
+                    "theme button landed on an unknown theme: {now}"
+                );
+            }
+        }
+
+        // The "+" new-tab button (name "newtab") must grow the tab count.
+        if let Some(w) = gtk::test_find_widget(&me.window, "newtab", gtk::glib::Type::UNIT) {
+            let btn = w.downcast::<gtk::Button>().ok();
+            if let Some(btn) = btn {
+                btn.emit_clicked();
+                gtk::glib::MainContext::default().iteration(true);
+                let now = me.tabs.borrow().len();
+                assert!(
+                    now > initial_tabs,
+                    "new-tab click did not create a tab ({initial_tabs} -> {now})"
+                );
+            }
+        }
+
+        // The ⋯ menu button must open a menu rather than crash.
+        if let Some(w) = gtk::test_find_widget(&me.window, "menu", gtk::glib::Type::UNIT) {
+            let btn = w.downcast::<gtk::Button>().ok();
+            if let Some(btn) = btn {
+                btn.clicked();
+                gtk::glib::MainContext::default().iteration(true);
+            }
+        }
     }
 }

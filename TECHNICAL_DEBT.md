@@ -9,21 +9,21 @@ None currently tracked.
 
 ## High
 
-1. **Linux does not enforce per-site permission rules.** `src/main.rs`
-   `connect_permission_request` always `deny()`, ignoring `sites.json`. Windows
-   honours the rules. Users who add an allow-rule on Linux get a silent no-op —
-   a correctness divergence with a privacy-policy flavour (over-denies, so it is
-   safe, but it is broken UX and platform-divergent). Fix: consult the shared
-   site-rules lookup from the permission-request handler.
-
-2. **Linux has no external-protocol policy.** Clicked links to non-web schemes
+1. **Linux external-protocol policy.** Clicked links to non-web schemes
    (e.g. `mailto:`, custom handlers) have no defined behaviour on Linux while
    Windows has a policy. A hostile page that can trigger an arbitrary external
    handler is a real vector; decide allow-list + UX, and keep it consistent.
 
-3. **No interactive/GUI test harness.** The GTK shell has unit tests but nothing
-   drives the actual widget tree or clicks a menu. A broken menu item ships
-   unnoticed. This is the single largest reliability gap.
+2. **Interactive test harness unverified.** The harness
+   (`clicking_buttons_changes_state_when_a_display_exists`) is written and
+   grounded in the real gtk 0.18.2 API, but has not yet been compiled/run — it
+   must pass under CI's `xvfb-run` before it can be trusted to gate future
+   clicks.
+
+3. **WebKitGTK permission mapping unverified.** The Linux permission-rule
+   wiring (`permission_kind_for` + handler) is written but not compiled; the
+   `is::<T>()` downcasts and `WebView::uri()` usage must be validated on the
+   real runner.
 
 ## Medium
 
@@ -59,6 +59,26 @@ before the 0.2.3 release is cut. Items to verify there:
   menu, toolbar-cycle button, new-tab/tab-background colours.
 * Windows: injected `html[data-theme]` blocks render for every theme, theme menu
   cycle + label, new-tab/error pages.
+
+## Linux permission enforcement (implemented)
+
+`src/main.rs` now consults `rc_core::features::site_decision` on every WebKitGTK
+permission request, mapping each concrete request type (notification,
+geolocation, device-info, user-media audio/video) to the same kind names Windows
+uses. **Deny-by-default is preserved** — only an explicit user allow-rule changes
+the outcome — so there is no security regression. Status: written, **not
+compiled** in this sandbox (needs webkit2gtk-4.0); verified by the real-runner
+`qa.yml`.
+
+## Interactive test harness (written, needs real-runner verification)
+
+`shell_tests::clicking_buttons_changes_state_when_a_display_exists` builds the
+real `App` under a display, pumps the main loop, and clicks the theme, new-tab
+and ⋯ menu buttons by widget name, asserting state changes (a click that does
+nothing is a broken feature). Widgets got stable `set_widget_name` values for
+findability (also an accessibility win). The test skips without a display and
+runs under CI's `xvfb-run`. Status: API is grounded in the actual gtk 0.18.2
+sources but this is **unverified** — it has not been compiled or executed here.
 
 ## Observability counters
 
