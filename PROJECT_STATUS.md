@@ -32,9 +32,12 @@ The project correctly documents this is not anonymity and does not hide IPs.
   accent contrast, historic-colour preservation, Windows chrome variable
   mapping).
 * CI runs fmt / clippy / test / audit / build on real Linux and Windows
-  runners; the new GTK per-theme CSS parse test runs under `xvfb` there.
+  runners; **all four jobs (CI Linux, CI Windows, QA Linux, QA Windows) pass on
+  `main` (2026-11-27)**. The interactive harness (`clicking_buttons...`) and the
+  per-theme GTK stylesheet parse test both ran and passed under xvfb on the QA
+  runner. `rc-core` suite passes on both platforms (45 tests).
 
-## 0.2.3 — themes (implemented; shell wiring needs real-runner verify)
+## 0.2.3 — themes (DONE and verified on real runners)
 
 * Shared theme registry in `rc-core/src/themes.rs`: Light, Dark (both
   byte-identical to 0.2.2), Graphite, Sepia, Midnight, Nord. One semantic
@@ -46,10 +49,19 @@ The project correctly documents this is not anonymity and does not hide IPs.
   as `html[data-theme]` blocks; the page sets `data-theme` from the persisted
   id; the hardcoded `html.dark` block and `.dark` toast rule removed; new-tab
   and error pages take the palette. Theme menu item cycles with a label.
-* **Verified here:** `rc-core` (45 tests, clippy clean). **Not compiled here:**
-  the Linux shell (this sandbox lacks `webkit2gtk-4.0`; only 4.1 is present) and
-  the Windows shell (needs a Windows host). Both are exercised by the existing
-  qa.yml real-runner gates before the release is cut.
+* **Verified on both real runners** (fmt, clippy `-D warnings`, tests, build).
+
+## 0.2.3 — Linux permission-rule enforcement (done and verified)
+
+`connect_permission_request` consults `rc_core::features::site_decision`, mapping
+WebKitGTK request types to the same kind names Windows uses. Deny-by-default
+preserved. Passed QA Linux with clippy `-D warnings`.
+
+## 0.2.3 — interactive test harness (done and verified)
+
+`shell_tests::clicking_buttons_changes_state_when_a_display_exists` builds the
+real App under xvfb, clicks the theme/+/⋯ buttons and asserts state changes.
+Passed on the QA Linux runner.
 
 ## Known gaps (open as of this session)
 

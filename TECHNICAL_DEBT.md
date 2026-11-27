@@ -14,16 +14,12 @@ None currently tracked.
    Windows has a policy. A hostile page that can trigger an arbitrary external
    handler is a real vector; decide allow-list + UX, and keep it consistent.
 
-2. **Interactive test harness unverified.** The harness
-   (`clicking_buttons_changes_state_when_a_display_exists`) is written and
-   grounded in the real gtk 0.18.2 API, but has not yet been compiled/run — it
-   must pass under CI's `xvfb-run` before it can be trusted to gate future
-   clicks.
+2. **Interactive test harness coverage is still thin.** The first harness test
+   passes on the Linux runner, but it drives only three buttons. Menu items,
+   omnibox actions, find-in-page and bookmarks are not yet exercised; expand the
+   harness over time rather than letting it stay a three-click smoke test.
 
-3. **WebKitGTK permission mapping unverified.** The Linux permission-rule
-   wiring (`permission_kind_for` + handler) is written but not compiled; the
-   `is::<T>()` downcasts and `WebView::uri()` usage must be validated on the
-   real runner.
+3. Ship 0.2.3 (all work is verified on real runners).
 
 ## Medium
 
@@ -60,25 +56,19 @@ before the 0.2.3 release is cut. Items to verify there:
 * Windows: injected `html[data-theme]` blocks render for every theme, theme menu
   cycle + label, new-tab/error pages.
 
-## Linux permission enforcement (implemented)
-
-`src/main.rs` now consults `rc_core::features::site_decision` on every WebKitGTK
-permission request, mapping each concrete request type (notification,
-geolocation, device-info, user-media audio/video) to the same kind names Windows
-uses. **Deny-by-default is preserved** — only an explicit user allow-rule changes
-the outcome — so there is no security regression. Status: written, **not
-compiled** in this sandbox (needs webkit2gtk-4.0); verified by the real-runner
-`qa.yml`.
-
-## Interactive test harness (written, needs real-runner verification)
+## Interactive test harness — VERIFIED (real-runner, 2026-11-27)
 
 `shell_tests::clicking_buttons_changes_state_when_a_display_exists` builds the
-real `App` under a display, pumps the main loop, and clicks the theme, new-tab
-and ⋯ menu buttons by widget name, asserting state changes (a click that does
-nothing is a broken feature). Widgets got stable `set_widget_name` values for
-findability (also an accessibility win). The test skips without a display and
-runs under CI's `xvfb-run`. Status: API is grounded in the actual gtk 0.18.2
-sources but this is **unverified** — it has not been compiled or executed here.
+real `App` under xvfb, clicks the theme / `+` / ⋯ buttons by stable widget name,
+and asserts state changes. **Passed on the Linux QA runner** (test printed
+`ok`). Widgets got stable `set_widget_name` values (also an accessibility win).
+
+## Linux permission enforcement — VERIFIED (real-runner, 2026-11-27)
+
+`src/main.rs` consults `rc_core::features::site_decision` on every WebKitGTK
+permission request. The only compile error the CI caught (missing
+`UserMediaPermissionRequestExt` import for `is_for_*_device`) was fixed, and QA
+Linux passed with clippy `-D warnings`. Deny-by-default preserved.
 
 ## Observability counters
 
